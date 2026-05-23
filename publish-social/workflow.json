@@ -1,0 +1,355 @@
+{
+  "name": "Multi-Channel Social Publisher (template)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "content-publish",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        200,
+        400
+      ],
+      "webhookId": "content-publish"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "slug",
+              "value": "={{ $json.body.slug }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "channels",
+              "value": "={{ $json.body.channels }}",
+              "type": "array"
+            },
+            {
+              "id": "a3",
+              "name": "posts",
+              "value": "={{ $json.body.posts }}",
+              "type": "object"
+            },
+            {
+              "id": "a4",
+              "name": "image_url",
+              "value": "={{ $json.body.image_url }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "normalize",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        420,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.channels }}",
+              "rightValue": "x",
+              "operator": {
+                "type": "array",
+                "operation": "contains",
+                "rightType": "any"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-x",
+      "name": "If X Enabled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.posts.x.text }}",
+        "additionalFields": {}
+      },
+      "id": "x-post",
+      "name": "Post to X",
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [
+        900,
+        200
+      ],
+      "credentials": {
+        "twitterOAuth2Api": {
+          "id": "REPLACE_WITH_TWITTEROAUTH2API_CREDENTIAL_ID",
+          "name": "X OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.channels }}",
+              "rightValue": "threads",
+              "operator": {
+                "type": "array",
+                "operation": "contains",
+                "rightType": "any"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-threads",
+      "name": "If Threads Enabled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Post to Meta Threads (single long post + optional image).\n// Requires n8n Variables: THREADS_USER_ID, THREADS_ACCESS_TOKEN.\n\nconst userId = $vars.THREADS_USER_ID;\nconst accessToken = $vars.THREADS_ACCESS_TOKEN;\nif (!userId || !accessToken) throw new Error('Missing THREADS_USER_ID or THREADS_ACCESS_TOKEN');\n\nconst item = $input.item.json;\nconst text = item.posts.threads.text;\nconst imageUrl = item.image_url;\nconst authHeader = { Authorization: `Bearer ${accessToken}` };\n\n// 1. Create media container\nconst containerBody = { media_type: imageUrl ? 'IMAGE' : 'TEXT', text };\nif (imageUrl) containerBody.image_url = imageUrl;\n\nconst container = await $helpers.httpRequest({\n  method: 'POST',\n  url: `https://graph.threads.net/v1.0/${userId}/threads`,\n  headers: authHeader,\n  body: containerBody,\n  json: true,\n});\nconst creationId = container.id;\n\n// 2. Publish \u2014 retry up to 6 times if the image container isn't ready yet.\n//    Each attempt first probes the container status via GET, which provides natural backoff without timers.\nlet publishRes;\nlet lastErr;\nfor (let attempt = 0; attempt < 6; attempt++) {\n  // Probe container readiness via GET; round-trip serves as backoff\n  if (attempt > 0) {\n    try {\n      await $helpers.httpRequest({\n        method: 'GET',\n        url: `https://graph.threads.net/v1.0/${creationId}`,\n        headers: authHeader,\n        qs: { fields: 'status,error_message' },\n        json: true,\n      });\n    } catch (_) { /* ignore probe failures */ }\n  }\n  try {\n    publishRes = await $helpers.httpRequest({\n      method: 'POST',\n      url: `https://graph.threads.net/v1.0/${userId}/threads_publish`,\n      headers: authHeader,\n      qs: { creation_id: creationId },\n      json: true,\n    });\n    break;\n  } catch (err) {\n    lastErr = err;\n    // If not ready yet, keep looping; for other errors, stop immediately.\n    const msg = String(err?.message || err);\n    if (!msg.includes('not ready') && !msg.includes('Media ID is not available')) throw err;\n  }\n}\nif (!publishRes) throw lastErr || new Error('Threads publish failed after retries');\n\nreturn {\n  json: {\n    channel: 'threads',\n    slug: item.slug,\n    post_id: publishRes.id,\n    url: `https://www.threads.net/@me/post/${publishRes.id}`,\n  },\n};\n"
+      },
+      "id": "threads-post",
+      "name": "Post to Threads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c3",
+              "leftValue": "={{ $json.channels }}",
+              "rightValue": "bluesky",
+              "operator": {
+                "type": "array",
+                "operation": "contains",
+                "rightType": "any"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-bluesky",
+      "name": "If Bluesky Enabled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Post Bluesky thread (array of posts, chained as replies).\n// Requires n8n Variables: BSKY_HANDLE (e.g. alecfoster.bsky.social), BSKY_APP_PASSWORD.\n\nconst handle = $vars.BSKY_HANDLE;\nconst appPassword = $vars.BSKY_APP_PASSWORD;\nif (!handle || !appPassword) throw new Error('Missing BSKY_HANDLE or BSKY_APP_PASSWORD');\n\nconst item = $input.item.json;\nconst thread = item.posts.bluesky.thread; // array of strings\nconst imageUrl = item.image_url;\n\n// 1. Login\nconst session = await $helpers.httpRequest({\n  method: 'POST',\n  url: 'https://bsky.social/xrpc/com.atproto.server.createSession',\n  body: { identifier: handle, password: appPassword },\n  json: true,\n});\nconst { accessJwt, did } = session;\nconst auth = { Authorization: `Bearer ${accessJwt}` };\n\n// 2. Upload image once (attached to first post only)\nlet imageBlob = null;\nif (imageUrl) {\n  const imgRes = await $helpers.httpRequest({ method: 'GET', url: imageUrl, encoding: 'arraybuffer', returnFullResponse: true });\n  const mime = imgRes.headers['content-type'] || 'image/png';\n  const upload = await $helpers.httpRequest({\n    method: 'POST',\n    url: 'https://bsky.social/xrpc/com.atproto.repo.uploadBlob',\n    headers: { ...auth, 'Content-Type': mime },\n    body: imgRes.body,\n    json: true,\n  });\n  imageBlob = upload.blob;\n}\n\n// 3. Post thread\nconst postedRefs = [];\nlet root = null;\nlet parent = null;\n\nfor (let i = 0; i < thread.length; i++) {\n  const text = thread[i];\n  const record = {\n    $type: 'app.bsky.feed.post',\n    text,\n    createdAt: new Date().toISOString(),\n    langs: ['en'],\n  };\n  if (i === 0 && imageBlob) {\n    record.embed = {\n      $type: 'app.bsky.embed.images',\n      images: [{ alt: '', image: imageBlob }],\n    };\n  }\n  if (parent) {\n    record.reply = { root, parent };\n  }\n  const res = await $helpers.httpRequest({\n    method: 'POST',\n    url: 'https://bsky.social/xrpc/com.atproto.repo.createRecord',\n    headers: auth,\n    body: { repo: did, collection: 'app.bsky.feed.post', record },\n    json: true,\n  });\n  const ref = { uri: res.uri, cid: res.cid };\n  postedRefs.push(ref);\n  if (i === 0) root = ref;\n  parent = ref;\n}\n\nconst firstRkey = postedRefs[0].uri.split('/').pop();\nreturn {\n  json: {\n    channel: 'bluesky',\n    slug: item.slug,\n    posts: postedRefs,\n    url: `https://bsky.app/profile/${handle}/post/${firstRkey}`,\n  },\n};\n"
+      },
+      "id": "bluesky-post",
+      "name": "Post to Bluesky",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1180,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { slug: $('Normalize Payload').item.json.slug, results: $input.all().map(i => i.json) } }}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1400,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Payload": {
+      "main": [
+        [
+          {
+            "node": "If X Enabled",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If Threads Enabled",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If Bluesky Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If X Enabled": {
+      "main": [
+        [
+          {
+            "node": "Post to X",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Post to X": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Threads Enabled": {
+      "main": [
+        [
+          {
+            "node": "Post to Threads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Post to Threads": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "If Bluesky Enabled": {
+      "main": [
+        [
+          {
+            "node": "Post to Bluesky",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Post to Bluesky": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
