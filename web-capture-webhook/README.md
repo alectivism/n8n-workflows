@@ -1,20 +1,25 @@
-# Podcast RSS + Vimeo Intake
+# Web Capture Webhook
 
-Twice-weekly cron: pulls podcast RSS (+ Vimeo) → transcribes → extracts topic ideas with an LLM → writes to Notion.
+Webhook endpoint for a browser extension / share target. Scrapes a URL and saves structured content to Notion.
 
 Part of a personal content pipeline by [Alec Foster](https://www.alecfoster.com). Importable as a single n8n workflow JSON.
 
 ## What it does
 
-Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a transcription service, polls for completion with a Wait node, extracts topic ideas with an LLM, stores transcripts in Google Drive, and writes ideas to Notion.
+Receives a POST with a URL and routing flags from a browser extension or Android share target. Routes by source: Reddit posts use the native `.json` endpoint (full post + comments + images), general pages go through Firecrawl, with a WebCrawlerAPI fallback. Saves structured content to Notion.
+
+Request body shape:
+```json
+{ "title": "", "url": "", "content": "", "contentType": "", "source": "", "sourceType": "", "capturedAt": "", "needsScrape": true, "isReddit": false }
+```
 
 ## At a glance
 
 | | |
 |---|---|
-| Trigger | Schedule (cron) |
-| Schedule | Tue & Fri, 10:00 |
-| Nodes | 40 |
+| Trigger | Webhook |
+| Schedule | Webhook (on demand) |
+| Nodes | 9 |
 | Destination | Notion content database |
 
 ## Quick start
@@ -22,14 +27,14 @@ Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a trans
 1. Open your n8n instance → **Workflows** → **Import from File** → pick `workflow.json`.
 2. Replace the placeholder credentials (see below). The imported file ships with `REPLACE_WITH_*_CREDENTIAL_ID` placeholders that won't resolve until you create your own.
 3. Repoint the Notion database: the workflow references placeholder database IDs (`aaaaaaaa-0000-...`). Open each Notion node, pick your own database, and remap the property fields.
-4. Set the workflow **Active**. The cron will fire on the schedule above.
+4. Set the workflow **Active** and grab the production webhook URL from the trigger node.
 
 ## Credentials needed
 
 | Service | n8n credential type | Notes |
 |---|---|---|
-| Google Drive | `googleDriveOAuth2Api` | OAuth2 for transcript storage |
-| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for the transcription API and the LLM |
+| Notion | `notionApi` | Notion integration token |
+| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for Firecrawl and WebCrawlerAPI (replace the `Bearer REPLACE_WITH_WEBCRAWLER_TOKEN` placeholder) |
 
 Don't paste secrets into the JSON. n8n's credential store is encrypted; the JSON only references credential IDs.
 

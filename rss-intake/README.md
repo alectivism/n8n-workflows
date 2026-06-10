@@ -1,20 +1,20 @@
-# Podcast RSS + Vimeo Intake
+# Industry RSS Intake
 
-Twice-weekly cron: pulls podcast RSS (+ Vimeo) → transcribes → extracts topic ideas with an LLM → writes to Notion.
+Daily cron over core industry RSS feeds. Reads, dedupes, and writes new items to a Notion content database.
 
 Part of a personal content pipeline by [Alec Foster](https://www.alecfoster.com). Importable as a single n8n workflow JSON.
 
 ## What it does
 
-Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a transcription service, polls for completion with a Wait node, extracts topic ideas with an LLM, stores transcripts in Google Drive, and writes ideas to Notion.
+The original intake workflow. Pulls a dozen marketing/AI industry feeds (AdExchanger, IAB, Digiday, Marketing Dive, MIT Tech Review AI, TechCrunch AI, VentureBeat AI, Wired AI, TLDR AI, and more), filters out items already seen, and creates a page per new article in Notion.
 
 ## At a glance
 
 | | |
 |---|---|
 | Trigger | Schedule (cron) |
-| Schedule | Tue & Fri, 10:00 |
-| Nodes | 40 |
+| Schedule | Daily, 14:00 |
+| Nodes | 19 |
 | Destination | Notion content database |
 
 ## Quick start
@@ -28,8 +28,7 @@ Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a trans
 
 | Service | n8n credential type | Notes |
 |---|---|---|
-| Google Drive | `googleDriveOAuth2Api` | OAuth2 for transcript storage |
-| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for the transcription API and the LLM |
+| Notion | `notionApi` | Notion integration token with access to your content database |
 
 Don't paste secrets into the JSON. n8n's credential store is encrypted; the JSON only references credential IDs.
 

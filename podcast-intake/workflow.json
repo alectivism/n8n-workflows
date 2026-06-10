@@ -1,0 +1,3927 @@
+{
+  "name": "Content Pipeline: Podcast RSS + Vimeo Intake",
+  "description": "Schedule-triggered pipeline: RSS podcast feeds + MMA Vimeo videos → AssemblyAI/Vimeo captions → Claude + GPT idea extraction → Notion. Tue+Fri 10am PT.",
+  "nodes": [
+    {
+      "name": "Tue + Fri 10am PT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        608
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 10 * * 2,5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Dedup by URL",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        1088,
+        608
+      ],
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "dedupeValue": "={{ $json.link || $json.guid || ($json.enclosure && $json.enclosure.url) || $json.id || $json.title }}",
+        "options": {
+          "historySize": 10000
+        }
+      },
+      "disabled": false
+    },
+    {
+      "name": "Relevance Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1600,
+        608
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.is_relevant }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Preserve Episode Metadata",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1872,
+        352
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "_episode_title",
+              "type": "string",
+              "value": "={{ $json.title }}"
+            },
+            {
+              "id": "2",
+              "name": "_episode_url",
+              "type": "string",
+              "value": "={{ $json.link }}"
+            },
+            {
+              "id": "3",
+              "name": "_episode_published",
+              "type": "string",
+              "value": "={{ $json.isoDate }}"
+            },
+            {
+              "id": "4",
+              "name": "_podcast_name",
+              "type": "string",
+              "value": "={{ $json.podcast_name }}"
+            },
+            {
+              "id": "5",
+              "name": "_default_topics",
+              "type": "array",
+              "value": "={{ $json.default_topics }}"
+            },
+            {
+              "id": "6",
+              "name": "audio_url",
+              "type": "string",
+              "value": "={{ $json.audio_url }}"
+            },
+            {
+              "id": "7",
+              "name": "_podcast_priority",
+              "type": "string",
+              "value": "={{ $json.podcast_priority }}"
+            },
+            {
+              "id": "8",
+              "name": "source_type",
+              "type": "string",
+              "value": "podcast"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "AssemblyAI: Submit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2128,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ audio_url: $(\"Preserve Episode Metadata\").item.json.audio_url, speech_model: \"universal\", speaker_labels: true, auto_chapters: true, auto_highlights: true, entity_detection: true, punctuate: true, format_text: true, word_boost: [\"Claude\",\"Anthropic\",\"OpenAI\",\"ChatGPT\",\"Sonnet\",\"Opus\",\"Haiku\",\"Gemini\",\"Grok\",\"Llama\",\"Mistral\",\"Cohere\",\"Perplexity\",\"GPT-5\",\"GPT-4o\",\"Codex\",\"Cursor\",\"MCP\",\"Model Context Protocol\",\"n8n\",\"Zapier\",\"Notion\",\"Vercel\",\"Supabase\",\"Agentic\",\"LLM\",\"RAG\",\"Fine-tuning\",\"Embedding\",\"Vector\",\"Inference\",\"Token\",\"Hallucination\",\"MMA\",\"Marketing + Media Alliance\",\"CMO\",\"CRO\",\"CAP\",\"ALTT\",\"ACE\",\"A3\",\"SIFT\",\"AURA\",\"ARC\",\"RAIL\",\"Nvidia\",\"H100\",\"Blackwell\",\"DeepSeek\",\"Qwen\",\"Kimi\"], boost_param: \"high\" }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "AssemblyAI API"
+        }
+      }
+    },
+    {
+      "name": "AssemblyAI: Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2384,
+        400
+      ],
+      "parameters": {
+        "amount": 30
+      },
+      "webhookId": "REPLACE_WITH_WEBHOOK_PATH"
+    },
+    {
+      "name": "AssemblyAI: Poll",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2640,
+        400
+      ],
+      "parameters": {
+        "url": "=https://api.assemblyai.com/v2/transcript/{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "AssemblyAI API"
+        }
+      }
+    },
+    {
+      "name": "AssemblyAI: Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2912,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "AssemblyAI: Extract Transcript",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3168,
+        320
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "transcript",
+              "type": "string",
+              "value": "={{ ($json.utterances && $json.utterances.length) ? $json.utterances.map(u => (u.speaker ? \"Speaker \" + u.speaker + \": \" : \"\") + u.text).join(\"\\n\") : $json.text }}"
+            },
+            {
+              "id": "2",
+              "name": "transcript_source",
+              "type": "string",
+              "value": "AssemblyAI"
+            },
+            {
+              "id": "3",
+              "name": "transcript_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "id": "4",
+              "name": "chapters_json",
+              "type": "string",
+              "value": "={{ JSON.stringify($json.chapters || []) }}"
+            },
+            {
+              "id": "5",
+              "name": "highlights_json",
+              "type": "string",
+              "value": "={{ JSON.stringify((($json.auto_highlights_result || {}).results) || []) }}"
+            },
+            {
+              "id": "6",
+              "name": "_episode_title",
+              "type": "string",
+              "value": "={{ $(\"Preserve Episode Metadata\").item.json._episode_title }}"
+            },
+            {
+              "id": "7",
+              "name": "_episode_url",
+              "type": "string",
+              "value": "={{ $(\"Preserve Episode Metadata\").item.json._episode_url }}"
+            },
+            {
+              "id": "8",
+              "name": "_episode_published",
+              "type": "string",
+              "value": "={{ $(\"Preserve Episode Metadata\").item.json._episode_published }}"
+            },
+            {
+              "id": "9",
+              "name": "_podcast_name",
+              "type": "string",
+              "value": "={{ $(\"Preserve Episode Metadata\").item.json._podcast_name }}"
+            },
+            {
+              "id": "10",
+              "name": "_default_topics",
+              "type": "array",
+              "value": "={{ $(\"Preserve Episode Metadata\").item.json._default_topics }}"
+            },
+            {
+              "id": "11",
+              "name": "_podcast_priority",
+              "type": "string",
+              "value": "={{ $(\"Preserve Episode Metadata\").item.json._podcast_priority }}"
+            },
+            {
+              "id": "12",
+              "name": "source_type",
+              "type": "string",
+              "value": "podcast"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Merge Transcripts (RSS + Vimeo)",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3424,
+        1400
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 1
+      }
+    },
+    {
+      "name": "Vimeo: List Recent Videos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        288,
+        2400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.vimeo.com/me/videos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.vimeo.*+json;version=3.4"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "sort",
+              "value": "date"
+            },
+            {
+              "name": "direction",
+              "value": "desc"
+            },
+            {
+              "name": "per_page",
+              "value": "25"
+            },
+            {
+              "name": "fields",
+              "value": "uri,name,description,created_time,privacy,duration,link,metadata"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Vimeo PAT"
+        }
+      }
+    },
+    {
+      "name": "Vimeo: Filter Public + Dedup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        2400
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.vimeoSeen) staticData.vimeoSeen = {};\nconst seen = staticData.vimeoSeen;\nconst now = Date.now();\nfor (const k of Object.keys(seen)) { if (now - seen[k] > 90*24*3600*1000) delete seen[k]; }\nconst out = [];\nconst allowedPrivacy = ['anybody','unlisted'];\nfor (const it of items) {\n  const videos = (it.json && it.json.data) || [];\n  for (const v of videos) {\n    if (!v || !v.uri) continue;\n    const priv = (v.privacy && v.privacy.view) || 'nobody';\n    if (!allowedPrivacy.includes(priv)) continue;\n    if (seen[v.uri]) continue;\n    seen[v.uri] = now;\n    const videoId = String(v.uri).replace('/videos/','').trim();\n    out.push({ json: { video_id: videoId, video_uri: v.uri, name: v.name || '', description: v.description || '', created_time: v.created_time || '', link: v.link || '', privacy_view: priv, duration: v.duration || 0 } });\n  }\n}\nreturn out;"
+      }
+    },
+    {
+      "name": "Vimeo: Preserve Metadata",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        832,
+        2400
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "_episode_title",
+              "type": "string",
+              "value": "={{ $json.name }}"
+            },
+            {
+              "id": "2",
+              "name": "_episode_url",
+              "type": "string",
+              "value": "={{ $json.link }}"
+            },
+            {
+              "id": "3",
+              "name": "_episode_published",
+              "type": "string",
+              "value": "={{ $json.created_time }}"
+            },
+            {
+              "id": "4",
+              "name": "_podcast_name",
+              "type": "string",
+              "value": "MMA Vimeo"
+            },
+            {
+              "id": "5",
+              "name": "_default_topics",
+              "type": "array",
+              "value": "={{ [\"Marketing AI\",\"AI Strategy\"] }}"
+            },
+            {
+              "id": "6",
+              "name": "_podcast_priority",
+              "type": "string",
+              "value": "high"
+            },
+            {
+              "id": "7",
+              "name": "video_id",
+              "type": "string",
+              "value": "={{ $json.video_id }}"
+            },
+            {
+              "id": "8",
+              "name": "audio_url",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "9",
+              "name": "source_type",
+              "type": "string",
+              "value": "vimeo"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "name": "Vimeo: Get Text Tracks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1104,
+        2400
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.vimeo.com/videos/{{ $json.video_id }}/texttracks",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.vimeo.*+json;version=3.4"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Vimeo PAT"
+        }
+      }
+    },
+    {
+      "name": "Vimeo Has Caption?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1376,
+        2400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ ($json.data && $json.data.find(t => t.active && typeof t.language === \"string\" && t.language.toLowerCase().startsWith(\"en\")) && $json.data.find(t => t.active && typeof t.language === \"string\" && t.language.toLowerCase().startsWith(\"en\")).link) ? \"yes\" : \"no\" }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Vimeo: Fetch Caption VTT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1648,
+        2272
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.data.find(t => t.active && typeof t.language === \"string\" && t.language.toLowerCase().startsWith(\"en\")).link }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "Vimeo: Parse VTT to Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        2272
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nconst metaAll = $('Vimeo: Preserve Metadata').all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const raw = items[i].json && (items[i].json.data || items[i].json.body || '');\n  const text = typeof raw === 'string' ? raw : JSON.stringify(raw);\n  const lines = text.split(/\\r?\\n/);\n  const plain = [];\n  for (const line of lines) {\n    if (!line) continue;\n    if (/^WEBVTT/i.test(line)) continue;\n    if (/^NOTE/i.test(line)) continue;\n    if (/^\\d+$/.test(line.trim())) continue;\n    if (line.includes('-->')) continue;\n    if (/^(Kind|Language|STYLE|Region):/i.test(line)) continue;\n    plain.push(line.replace(/<[^>]+>/g,'').trim());\n  }\n  const transcript = plain.filter(Boolean).join(' ');\n  const meta = metaAll[i] ? metaAll[i].json : (metaAll[0] ? metaAll[0].json : {});\n  out.push({ json: { transcript, transcript_source: 'Vimeo', _episode_title: meta._episode_title || '', _episode_url: meta._episode_url || '', _episode_published: meta._episode_published || '', _podcast_name: meta._podcast_name || 'MMA Vimeo', _default_topics: meta._default_topics || [], _podcast_priority: meta._podcast_priority || 'high', source_type: 'vimeo' } });\n}\nreturn out;"
+      }
+    },
+    {
+      "name": "Vimeo: Get Download URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1648,
+        2528
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.vimeo.com/videos/{{ $(\"Vimeo: Preserve Metadata\").item.json.video_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.vimeo.*+json;version=3.4"
+            }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "download,files"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Vimeo PAT"
+        }
+      }
+    },
+    {
+      "name": "Vimeo: Set Audio URL",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1920,
+        2528
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "audio_url",
+              "type": "string",
+              "value": "={{ (() => { const files = ($json.files || []); const mp4 = files.filter(f => f && f.type && f.type.includes(\"mp4\") && f.link); if (mp4.length === 0) return (files[0] && files[0].link) || \"\"; mp4.sort((a,b) => (a.size||0) - (b.size||0)); return mp4[0].link || \"\"; })() }}"
+            },
+            {
+              "id": "2",
+              "name": "_episode_title",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._episode_title }}"
+            },
+            {
+              "id": "3",
+              "name": "_episode_url",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._episode_url }}"
+            },
+            {
+              "id": "4",
+              "name": "_episode_published",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._episode_published }}"
+            },
+            {
+              "id": "5",
+              "name": "_podcast_name",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._podcast_name }}"
+            },
+            {
+              "id": "6",
+              "name": "_default_topics",
+              "type": "array",
+              "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._default_topics }}"
+            },
+            {
+              "id": "7",
+              "name": "_podcast_priority",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._podcast_priority }}"
+            },
+            {
+              "id": "8",
+              "name": "source_type",
+              "type": "string",
+              "value": "vimeo"
+            },
+            {
+              "id": "9",
+              "name": "video_id",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json.video_id }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Vimeo AssemblyAI: Submit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2192,
+        2528
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ audio_url: $(\"Vimeo: Set Audio URL\").item.json.audio_url, speech_model: \"universal\", speaker_labels: true, auto_chapters: true, punctuate: true, format_text: true, word_boost: [\"Claude\",\"Anthropic\",\"OpenAI\",\"ChatGPT\",\"Sonnet\",\"Opus\",\"Haiku\",\"Gemini\",\"MCP\",\"Marketing + Media Alliance\",\"MMA\",\"CMO\",\"CAP\",\"ALTT\",\"ACE\",\"A3\",\"SIFT\",\"AURA\",\"ARC\",\"RAIL\"], boost_param: \"high\" }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "AssemblyAI API"
+        }
+      }
+    },
+    {
+      "name": "Vimeo AssemblyAI: Wait 30s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2448,
+        2528
+      ],
+      "parameters": {
+        "amount": 30
+      },
+      "webhookId": "REPLACE_WITH_WEBHOOK_PATH"
+    },
+    {
+      "name": "Vimeo AssemblyAI: Poll",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2704,
+        2528
+      ],
+      "parameters": {
+        "url": "=https://api.assemblyai.com/v2/transcript/{{ $json.id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "AssemblyAI API"
+        }
+      }
+    },
+    {
+      "name": "Vimeo AssemblyAI: Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2976,
+        2528
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Vimeo AssemblyAI: Extract Transcript",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3232,
+        2528
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "transcript",
+              "type": "string",
+              "value": "={{ $json.text }}"
+            },
+            {
+              "id": "2",
+              "name": "transcript_source",
+              "type": "string",
+              "value": "AssemblyAI"
+            },
+            {
+              "id": "3",
+              "name": "_episode_title",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._episode_title }}"
+            },
+            {
+              "id": "4",
+              "name": "_episode_url",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._episode_url }}"
+            },
+            {
+              "id": "5",
+              "name": "_episode_published",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._episode_published }}"
+            },
+            {
+              "id": "6",
+              "name": "_podcast_name",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._podcast_name }}"
+            },
+            {
+              "id": "7",
+              "name": "_default_topics",
+              "type": "array",
+              "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._default_topics }}"
+            },
+            {
+              "id": "8",
+              "name": "_podcast_priority",
+              "type": "string",
+              "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._podcast_priority }}"
+            },
+            {
+              "id": "9",
+              "name": "source_type",
+              "type": "string",
+              "value": "vimeo"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Attach Episode Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3680,
+        1400
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "transcript",
+              "type": "string",
+              "value": "={{ $json.transcript }}"
+            },
+            {
+              "id": "2",
+              "name": "transcript_source",
+              "type": "string",
+              "value": "={{ $json.transcript_source }}"
+            },
+            {
+              "id": "3",
+              "name": "transcript_id",
+              "type": "string",
+              "value": "={{ $json.transcript_id || \"\" }}"
+            },
+            {
+              "id": "4",
+              "name": "source_page_id",
+              "type": "string",
+              "value": "={{ $json.source_page_id || \"\" }}"
+            },
+            {
+              "id": "5",
+              "name": "_episode_title",
+              "type": "string",
+              "value": "={{ $json._episode_title }}"
+            },
+            {
+              "id": "6",
+              "name": "_episode_url",
+              "type": "string",
+              "value": "={{ $json._episode_url }}"
+            },
+            {
+              "id": "7",
+              "name": "_episode_published",
+              "type": "string",
+              "value": "={{ $json._episode_published }}"
+            },
+            {
+              "id": "8",
+              "name": "_podcast_name",
+              "type": "string",
+              "value": "={{ $json._podcast_name }}"
+            },
+            {
+              "id": "9",
+              "name": "_default_topics",
+              "type": "array",
+              "value": "={{ $json._default_topics }}"
+            },
+            {
+              "id": "10",
+              "name": "_podcast_priority",
+              "type": "string",
+              "value": "={{ $json._podcast_priority || \"medium\" }}"
+            },
+            {
+              "id": "11",
+              "name": "source_type",
+              "type": "string",
+              "value": "={{ $json.source_type || \"podcast\" }}"
+            },
+            {
+              "id": "12",
+              "name": "chapters_json",
+              "type": "string",
+              "value": "={{ $json.chapters_json || \"[]\" }}"
+            },
+            {
+              "id": "13",
+              "name": "highlights_json",
+              "type": "string",
+              "value": "={{ $json.highlights_json || \"[]\" }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Claude Extract Ideas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3952,
+        1272
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-6\", max_tokens: 16000, system: [{ type: \"text\", text: \"You extract neutral, objective research material from podcast/video transcripts for Alec Foster\\u0027s content pipeline. Alec is Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Alec\\u0027s core interests and areas of expertise (use these to score Relevance): Claude (all Anthropic products), Claude Code and agent SDKs, agentic AI, AI governance, responsible AI, AI safety, marketing AI, enterprise AI adoption, MCP / Model Context Protocol, prompt engineering, LLM evals, AI strategy for CMOs, MMA frameworks (ALTT, ACE, CAP, AURA, RAIL, ARC, SIFT). Output is neutral reference stock, not first-person drafts. Calibrate depth by priority tier: HIGH = 4-8 ideas. MEDIUM = 2-5. LOW = 0-3. Transcripts may be speaker-diarized (Speaker A: / Speaker B:) — map labels to real names when introductions reveal them. Be generous with depth.\", cache_control: { type: \"ephemeral\" } }], messages: [{ role: \"user\", content: \"Extract every distinct content-worthy topic from this \" + ($json.source_type === \"vimeo\" ? \"Vimeo video\" : \"podcast episode\") + \".\\nSource type: \" + ($json.source_type || \"podcast\") + \"\\nPriority tier: \" + (($json._podcast_priority || \"medium\").toUpperCase()) + \"\\n\\nFor EACH idea return:\\n\" + \"- topic_headline: punchy, specific (not generic)\\n\" + \"- hook: 2-3 sentences\\n\" + \"- key_points: 5-10 bullets, each >=15 words, with numbers/names/specifics from the transcript\\n\" + \"- observations: 2-5 secondary bullets of nuance, context, or counterpoints\\n\" + \"- tips: 0-5 actionable takeaways (empty array if analytical)\\n\" + \"- quotes: 2-4 {speaker, quote, timestamp}. INCLUDE both direct host/guest quotes AND quotes attributed to cited third parties (researcher, company, paper) — for those use the ORIGINAL source as speaker (e.g. \\\"Dario Amodei (cited by host)\\\"). Use real names when intros reveal speaker identities. Quote must be >=10 words verbatim. Omit the entry rather than returning an empty string.\\n\" + \"- why_it_matters: 3-5 sentences with Alec/MMA angle when relevant\\n\" + \"- open_question: 1 sentence\\n\" + \"- draft_angle: 1-2 sentence post/infographic spine\\n\" + \"- further_reading: 0-4 {title, url} — only if a real URL is explicit/obvious. Never fabricate.\\n\" + \"- topics: (Claude|Agents|AI Governance|Marketing AI|Measurement|AI Strategy|LLMs|MCP|Voice AI|AI Safety|Enterprise AI|Creator Economy|Policy|Research|Content|Prompt Engineering|Reddit/Search|OpenAI|Anthropic|Google|Meta|Codex)\\n\" + \"- audience: (Marketers|AI Practitioners|Execs/CMOs|Governance|Builders|General)\\n\" + \"- hot_take_potential: High|Medium|Low — contrarian/debate-worthy\\n\" + \"- utility: High|Medium|Low — practical/educational value\\n\" + \"- relevance: High|Medium|Low — fit to ALEC\\u0027S INTERESTS (Claude/Claude Code, agentic AI, AI governance, responsible AI, marketing AI, enterprise AI, MCP, prompt engineering, MMA frameworks). High = Alec has clear standing/expertise to speak publicly on this; Low = outside his lane (e.g. hardware deep-dives, consumer celebrity AI news, non-AI business stories). Be honest — not every idea needs to be High.\\n\" + \"- format: Hot Take|Explainer|How-To|Framework|Announcement|Case Study\\n\\n\" + \"Chapter markers (guide for idea boundaries, optional):\\n\" + ($json.chapters_json && $json.chapters_json !== \"[]\" ? (JSON.parse($json.chapters_json).slice(0, 25).map(c => \"- \" + (c.headline || \"\") + \": \" + (c.gist || c.summary || \"\")).join(\"\\n\")) : \"(none)\") + \"\\n\\n\" + \"AssemblyAI auto-highlights (quote candidates, optional):\\n\" + ($json.highlights_json && $json.highlights_json !== \"[]\" ? (JSON.parse($json.highlights_json).slice(0, 15).map(h => \"- \" + (h.text || \"\")).join(\"\\n\")) : \"(none)\") + \"\\n\\n\" + \"Ignore sponsor reads, intros/outros, promos. Return ONLY JSON:\\n\" + \"{\\\"episode_summary\\\":\\\"3-5 sentence overview\\\",\\\"ideas\\\":[...]}\\n\\n\" + \"Episode: \" + $json._episode_title + \"\\nPodcast: \" + $json._podcast_name + \"\\nPublished: \" + $json._episode_published + \"\\n\\nTranscript:\\n\" + $json.transcript }] }) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "name": "Tag: Claude Sonnet 4.6",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4224,
+        1144
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "extraction_model",
+              "type": "string",
+              "value": "Sonnet 4.6"
+            },
+            {
+              "id": "2",
+              "name": "_episode_title",
+              "type": "string",
+              "value": "={{ $(\"Attach Episode Context\").item.json._episode_title }}"
+            },
+            {
+              "id": "3",
+              "name": "_episode_url",
+              "type": "string",
+              "value": "={{ $(\"Attach Episode Context\").item.json._episode_url }}"
+            },
+            {
+              "id": "4",
+              "name": "_episode_published",
+              "type": "string",
+              "value": "={{ $(\"Attach Episode Context\").item.json._episode_published }}"
+            },
+            {
+              "id": "5",
+              "name": "_podcast_name",
+              "type": "string",
+              "value": "={{ $(\"Attach Episode Context\").item.json._podcast_name }}"
+            },
+            {
+              "id": "6",
+              "name": "_default_topics",
+              "type": "array",
+              "value": "={{ $(\"Attach Episode Context\").item.json._default_topics }}"
+            },
+            {
+              "id": "7",
+              "name": "transcript_source",
+              "type": "string",
+              "value": "={{ $(\"Attach Episode Context\").item.json.transcript_source }}"
+            },
+            {
+              "id": "8",
+              "name": "source_type",
+              "type": "string",
+              "value": "={{ $(\"Attach Episode Context\").item.json.source_type }}"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "name": "Parse Ideas + Split",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4736,
+        1400
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const TOPIC_ALIASES = {\n  \"google gemini\": \"Google\", \"gemini\": \"Google\", \"google\": \"Google\",\n  \"chatgpt\": \"OpenAI\", \"gpt-5\": \"OpenAI\", \"gpt-4\": \"OpenAI\", \"openai\": \"OpenAI\",\n  \"anthropic\": \"Anthropic\", \"claude sonnet\": \"Claude\", \"claude opus\": \"Claude\", \"claude haiku\": \"Claude\", \"claude\": \"Claude\",\n  \"meta ai\": \"Meta\", \"llama\": \"Meta\", \"meta\": \"Meta\",\n  \"agent\": \"Agents\", \"agents\": \"Agents\", \"agentic\": \"Agents\", \"agentic ai\": \"Agents\", \"ai agent\": \"Agents\",\n  \"governance\": \"AI Governance\", \"ai governance\": \"AI Governance\", \"responsible ai\": \"AI Governance\", \"ethics\": \"AI Governance\", \"ai ethics\": \"AI Governance\",\n  \"safety\": \"AI Safety\", \"ai safety\": \"AI Safety\", \"alignment\": \"AI Safety\",\n  \"policy\": \"Policy\", \"regulation\": \"Policy\", \"regulatory\": \"Policy\", \"eu ai act\": \"Policy\",\n  \"marketing\": \"Marketing AI\", \"marketing ai\": \"Marketing AI\", \"advertising\": \"Marketing AI\", \"adtech\": \"Marketing AI\", \"personalization\": \"Marketing AI\",\n  \"measurement\": \"Measurement\", \"attribution\": \"Measurement\", \"analytics\": \"Measurement\",\n  \"strategy\": \"AI Strategy\", \"ai strategy\": \"AI Strategy\", \"enterprise strategy\": \"AI Strategy\",\n  \"llm\": \"LLMs\", \"llms\": \"LLMs\", \"large language model\": \"LLMs\", \"foundation model\": \"LLMs\",\n  \"mcp\": \"MCP\", \"model context protocol\": \"MCP\",\n  \"voice\": \"Voice AI\", \"voice ai\": \"Voice AI\", \"tts\": \"Voice AI\", \"stt\": \"Voice AI\",\n  \"enterprise\": \"Enterprise AI\", \"enterprise ai\": \"Enterprise AI\", \"b2b ai\": \"Enterprise AI\",\n  \"creator\": \"Creator Economy\", \"creator economy\": \"Creator Economy\",\n  \"research\": \"Research\", \"paper\": \"Research\", \"arxiv\": \"Research\",\n  \"content\": \"Content\",\n  \"prompt\": \"Prompt Engineering\", \"prompt engineering\": \"Prompt Engineering\", \"prompting\": \"Prompt Engineering\",\n  \"search\": \"Reddit/Search\", \"reddit\": \"Reddit/Search\", \"perplexity\": \"Reddit/Search\",\n  \"codex\": \"Codex\", \"openai codex\": \"Codex\", \"codex cli\": \"Codex\"\n};\nconst VALID_TOPICS = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nfunction normalizeTopics(topics) {\n  const out = new Set();\n  for (const t of (topics || [])) {\n    if (!t) continue;\n    const raw = String(t).trim();\n    if (VALID_TOPICS.has(raw)) { out.add(raw); continue; }\n    const lc = raw.toLowerCase();\n    if (TOPIC_ALIASES[lc]) { out.add(TOPIC_ALIASES[lc]); continue; }\n    // fuzzy contains\n    for (const [alias, canon] of Object.entries(TOPIC_ALIASES)) {\n      if (lc.includes(alias)) { out.add(canon); break; }\n    }\n  }\n  return Array.from(out);\n}\nconst items = $input.all();\nconst out = [];\nlet skipped = 0;\nfor (let i = 0; i < items.length; i++) {\n  const d = items[i].json;\n  const raw = (d.content && d.content[0] && d.content[0].text) ? d.content[0].text : \"{}\";\n  const cleaned = raw.replace(/^\\x60\\x60\\x60json\\s*/i, \"\").replace(/\\x60\\x60\\x60\\s*$/, \"\").trim();\n  const ctx = d;\n  let parsed;\n  try { parsed = JSON.parse(cleaned); } catch (e) {\n    out.push({ json: {\n      _parse_error: e.message, raw: raw.substring(0, 500),\n      episode_url: ctx._episode_url,\n      topic_headline: \"PARSE FAILED: \" + (ctx._episode_title || \"unknown\"),\n      hook: \"Extraction response could not be parsed as JSON.\",\n      key_points: [], observations: [], tips: [], quotes: [], why_it_matters: \"\",\n      open_question: \"\", draft_angle: \"\", further_reading: [], topics: [], audience: [],\n      hot_take_potential: \"Low\", utility: \"Low\", relevance: \"Low\", format: \"Explainer\",\n      episode_title: ctx._episode_title, episode_published: ctx._episode_published,\n      podcast_name: ctx._podcast_name, merged_topics: [],\n      extraction_model: \"Sonnet 4.6\",\n      transcript_source: ctx.transcript_source || \"Unknown\",\n      transcript_id: ctx.transcript_id || \"\",\n      source_page_id: ctx.source_page_id || \"\",\n      source_type: ctx.source_type || \"podcast\"\n    } });\n    continue;\n  }\n  const ideas = parsed.ideas || [];\n  for (const idea of ideas) {\n    const rel = idea.relevance || \"Medium\";\n    const util = idea.utility || \"Medium\";\n    // NOISE FILTER: drop only if BOTH relevance and utility are Low\n    if (rel === \"Low\" && util === \"Low\") { skipped++; continue; }\n    const mergedTopics = Array.from(new Set([\n      ...normalizeTopics(idea.topics || []),\n      ...normalizeTopics(ctx._default_topics || [])\n    ]));\n    out.push({ json: {\n      topic_headline: idea.topic_headline || \"Untitled\",\n      hook: idea.hook || \"\",\n      key_points: idea.key_points || [],\n      observations: idea.observations || [],\n      tips: idea.tips || [],\n      quotes: (idea.quotes || []).filter(q => q && q.quote && String(q.quote).trim().length >= 10),\n      why_it_matters: idea.why_it_matters || \"\",\n      open_question: idea.open_question || \"\",\n      draft_angle: idea.draft_angle || \"\",\n      further_reading: (idea.further_reading || []).filter(r => r && r.url && r.title),\n      topics: idea.topics || [],\n      audience: idea.audience || [],\n      hot_take_potential: idea.hot_take_potential || \"Medium\",\n      utility: util,\n      relevance: rel,\n      format: idea.format || \"Explainer\",\n      episode_summary: parsed.episode_summary || \"\",\n      episode_title: ctx._episode_title || \"\",\n      episode_url: ctx._episode_url || \"\",\n      episode_published: ctx._episode_published || \"\",\n      podcast_name: ctx._podcast_name || \"\",\n      merged_topics: mergedTopics,\n      extraction_model: \"Sonnet 4.6\",\n      transcript_source: ctx.transcript_source || \"Unknown\",\n      transcript_id: ctx.transcript_id || \"\",\n      source_page_id: ctx.source_page_id || \"\",\n      source_type: ctx.source_type || \"podcast\"\n    } });\n  }\n}\nconsole.log(\"Noise filter skipped\", skipped, \"low-rel-low-util ideas\");\nreturn out;\n"
+      }
+    },
+    {
+      "name": "Notion: Create Idea Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        4992,
+        1400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" }, properties: { Title: { title: [{ text: { content: ($json.topic_headline || \"Untitled\").substring(0, 200) } }] }, Episode: { rich_text: [{ type: \"text\", text: { content: (($json.podcast_name || \"\") + \" — \" + ($json.episode_title || \"\")).substring(0, 2000), link: $json.episode_url ? { url: $json.episode_url } : null } }] }, \"Source Type\": { select: { name: $json.source_type === \"vimeo\" ? \"vimeo\" : \"podcast\" } }, Type: { select: { name: \"Idea\" } }, Published: { date: { start: ($json.episode_published || \"\").substring(0, 10) || null } }, \"Hot Take Potential\": { select: { name: $json.hot_take_potential || \"Medium\" } }, Utility: { select: { name: $json.utility || \"Medium\" } }, Relevance: { select: { name: $json.relevance || \"Medium\" } }, Format: { select: { name: $json.format || \"Explainer\" } }, Topics: { multi_select: ($json.merged_topics || []).map(t => ({ name: t })) }, Audience: { multi_select: ($json.audience || []).map(a => ({ name: a })) }, Summary: { rich_text: [{ text: { content: ($json.hook || \"\").substring(0, 2000) } }] }, \"Extraction Model\": { select: { name: $json.extraction_model || \"Sonnet 4.6\" } }, \"Transcript Source\": { select: { name: $json.transcript_source || \"Unknown\" } }, \"Transcript ID\": { rich_text: [{ text: { content: ($json.transcript_id || \"\").substring(0, 2000) } }] }, \"Episode Source\": $json.source_page_id ? { relation: [{ id: $json.source_page_id }] } : { relation: [] } }, children: [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Hook\" } }] } }, { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: ($json.hook || \"\").substring(0, 2000) } }] } }, { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Key Points\" } }] } }, ...($json.key_points || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })), ...(($json.observations || []).length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Observations\" } }] } }, ...($json.observations || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } }))] : []), ...(($json.tips || []).length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tips\" } }] } }, ...($json.tips || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } }))] : []), ...(($json.quotes || []).length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Quotes\" } }] } }, ...($json.quotes || []).map(q => ({ object: \"block\", type: \"quote\", quote: { rich_text: [{ type: \"text\", text: { content: (\"\\\"\" + (q.quote || \"\") + \"\\\" — \" + (q.speaker || \"Unknown\") + (q.timestamp ? \" (\" + q.timestamp + \")\" : \"\")).substring(0, 2000) } }] } }))] : []), { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Why It Matters\" } }] } }, { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: ($json.why_it_matters || \"\").substring(0, 2000) } }] } }, { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Open Question\" } }] } }, { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: ($json.open_question || \"\").substring(0, 2000) } }] } }, { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Draft Angle\" } }] } }, { object: \"block\", type: \"callout\", callout: { icon: { type: \"emoji\", emoji: \"💡\" }, rich_text: [{ type: \"text\", text: { content: ($json.draft_angle || \"\").substring(0, 2000) } }] } }, ...(($json.further_reading || []).length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Further Reading\" } }] } }, ...($json.further_reading || []).map(r => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: (r.title || r.url || \"\").substring(0, 2000), link: r.url ? { url: r.url } : null } }] } }))] : []), { object: \"block\", type: \"divider\", divider: {} }, { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: \"Source: \" + ($json.podcast_name || \"\") + \" — \" + ($json.episode_title || \"\") + \" [model: \" + ($json.extraction_model || \"\") + \" | transcript: \" + ($json.transcript_source || \"\") + \" | type: \" + ($json.source_type || \"podcast\") + \"]\" } }] } } ] }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 3,
+              "batchInterval": 400
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "name": "Feed Config List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        608
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Emit one item per podcast feed, carrying metadata so the downstream\n// enrich step can attach it to each RSS item. Nate's Notebook excluded\n// (Substack private feed 403s from n8n cloud IPs — fix separately with HTTP+UA).\nconst feeds = [\n  { url: 'https://www.patreon.com/rss/AIDailyBrief?auth=REDACTED_ROTATE_ME&show=1430346', podcast_name: 'AI Daily Brief', always_relevant: true, default_topics: ['AI Strategy'], podcast_priority: 'high' },\n  { url: 'https://feeds.megaphone.fm/marketingai', podcast_name: 'The Artificial Intelligence Show', always_relevant: true, default_topics: ['Marketing AI'], podcast_priority: 'high' },\n  { url: 'https://feeds.simplecast.com/l2i9YnTd', podcast_name: 'Hard Fork', always_relevant: false, default_topics: [], podcast_priority: 'high' },\n  { url: 'https://feeds.simplecast.com/Rz_NWJDG', podcast_name: 'Decoding AI for Marketing', always_relevant: true, default_topics: ['Marketing AI','Measurement'], podcast_priority: 'high' },\n  { url: 'https://feeds.megaphone.fm/buildingbettercmos', podcast_name: 'Building Better CMOs', always_relevant: false, default_topics: [], podcast_priority: 'low' },\n  { url: 'https://rss.libsyn.com/shows/45920/destinations/151434.xml', podcast_name: 'AI in Business', always_relevant: true, default_topics: ['Enterprise AI'], podcast_priority: 'medium' },\n  { url: 'https://feeds.megaphone.fm/PDP6186156462', podcast_name: 'Frontier CMO', always_relevant: false, default_topics: [], podcast_priority: 'low' },\n  { url: 'https://rss.art19.com/the-cmo-podcast', podcast_name: 'The CMO Podcast', always_relevant: false, default_topics: [], podcast_priority: 'low' },\n  { url: 'https://feeds.buzzsprout.com/2418777.rss', podcast_name: 'AI Explained', always_relevant: true, default_topics: ['Research'], podcast_priority: 'high' },\n  { url: 'https://changelog.com/practicalai/feed', podcast_name: 'Practical AI', always_relevant: true, default_topics: ['AI Strategy'], podcast_priority: 'medium' },\n  { url: 'https://feeds.megaphone.fm/vergecast', podcast_name: 'The Vergecast', always_relevant: false, default_topics: ['Policy'], podcast_priority: 'medium' },\n  { url: 'https://rss.buzzsprout.com/1786427.rss', podcast_name: 'The Good Robot', always_relevant: true, default_topics: ['AI Governance','AI Safety'], podcast_priority: 'high' },\n  { url: 'https://feeds.transistor.fm/in-ai-we-trust', podcast_name: 'In AI We Trust', always_relevant: false, default_topics: ['AI Governance'], podcast_priority: 'low' },\n  { url: 'https://rss.libsyn.com/shows/539322/destinations/4646017.xml', podcast_name: 'AI Governance (Enzai)', always_relevant: true, default_topics: ['AI Governance','Policy'], podcast_priority: 'high' },\n  { url: 'https://feeds.simplecast.com/rZ0cYk12', podcast_name: 'Your Undivided Attention', always_relevant: true, default_topics: ['AI Governance','AI Safety'], podcast_priority: 'high' },\n  { url: 'https://feeds.megaphone.fm/CSIS8973369418', podcast_name: 'The AI Policy Podcast', always_relevant: true, default_topics: ['Policy','AI Governance'], podcast_priority: 'high' },\n  { url: 'https://rss.buzzsprout.com/2175779.rss', podcast_name: 'Everyday AI', always_relevant: false, default_topics: ['Marketing AI','AI Strategy'], podcast_priority: 'medium' },\n  { url: 'https://rss.libsyn.com/shows/123267/destinations/727317.xml', podcast_name: 'Eye on AI', always_relevant: false, default_topics: ['Research','Enterprise AI'], podcast_priority: 'medium' },\n];\nreturn feeds.map(f => ({ json: f }));"
+      }
+    },
+    {
+      "name": "HTTP: Fetch Raw RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        544,
+        608
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (content-pipeline/1.0)"
+            },
+            {
+              "name": "Accept",
+              "value": "application/rss+xml, application/xml, text/xml, */*"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Parse + Filter + Enrich",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        608
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const WINDOW_DAYS = 7;\nconst cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;\nconst keywords = [\"ai\",\"artificial intelligence\",\"claude\",\"gpt\",\"anthropic\",\"openai\",\"gemini\",\"agent\",\"llm\",\"machine learning\",\"marketing ai\",\"martech\",\"copilot\",\"automation\",\"mcp\",\"model context protocol\"];\nfunction getTag(tag, block) {\n  const re = new RegExp(\"<\" + tag + \"(?:\\\\s[^>]*)?>([\\\\s\\\\S]*?)<\\\\/\" + tag + \">\", \"i\");\n  const m = block.match(re);\n  if (!m) return \"\";\n  let v = m[1];\n  v = v.replace(/^\\s*<!\\[CDATA\\[/, \"\").replace(/\\]\\]>\\s*$/, \"\");\n  return v.trim();\n}\nfunction getAttr(tag, name, block) {\n  const re = new RegExp(\"<\" + tag + \"[^>]*\\\\b\" + name + \"=\\\"([^\\\"]*)\\\"\", \"i\");\n  const m = block.match(re);\n  return m ? m[1] : \"\";\n}\nfunction pickEpisodeUrl(block) {\n  const link = getTag(\"link\", block);\n  if (link && /^https?:\\/\\//i.test(link)) return link;\n  const atomHref = getAttr(\"atom:link\", \"href\", block);\n  if (atomHref && /^https?:\\/\\//i.test(atomHref)) return atomHref;\n  const gipm = /<guid[^>]*isPermaLink=\\\"true\\\"[^>]*>([\\s\\S]*?)<\\/guid>/i.exec(block);\n  if (gipm) {\n    const v = gipm[1].replace(/^\\s*<!\\[CDATA\\[/, \"\").replace(/\\]\\]>\\s*$/, \"\").trim();\n    if (/^https?:\\/\\//i.test(v)) return v;\n  }\n  const g = getTag(\"guid\", block);\n  if (g && /^https?:\\/\\//i.test(g)) return g;\n  return \"\";\n}\nconst out = [];\nconst httpItems = $input.all();\nfor (let i = 0; i < httpItems.length; i++) {\n  const it = httpItems[i].json;\n  if (it._http_error || it.error) continue;\n  const xml = (typeof it.data === \"string\" ? it.data : (typeof it.body === \"string\" ? it.body : \"\"));\n  if (!xml) continue;\n  const feed = $(\"Feed Config List\").itemMatching(i).json;\n  const itemRe = /<item(?:\\s[^>]*)?>[\\s\\S]*?<\\/item>/gi;\n  let m;\n  while ((m = itemRe.exec(xml)) !== null) {\n    const block = m[0];\n    const pub = getTag(\"pubDate\", block) || getTag(\"dc:date\", block) || getTag(\"published\", block);\n    if (!pub) continue;\n    const t = new Date(pub).getTime();\n    if (isNaN(t) || t < cutoff) continue;\n    const title = getTag(\"title\", block);\n    const episodeUrl = pickEpisodeUrl(block);\n    const enclosureUrl = getAttr(\"enclosure\", \"url\", block);\n    if (!enclosureUrl) continue;\n    const descRaw = getTag(\"description\", block) || getTag(\"content:encoded\", block) || \"\";\n    const descText = descRaw.replace(/<[^>]+>/g, \" \").replace(/\\s+/g, \" \").trim().substring(0, 500);\n    const text = (title + \" \" + descText).toLowerCase();\n    const keywordHit = keywords.some(k => text.includes(k));\n    const isRelevant = feed.always_relevant || keywordHit;\n    if (!isRelevant) continue;\n    out.push({ json: {\n      title,\n      link: episodeUrl,\n      isoDate: new Date(t).toISOString(),\n      pubDate: pub,\n      contentSnippet: descText,\n      audio_url: enclosureUrl,\n      podcast_name: feed.podcast_name,\n      default_topics: feed.default_topics,\n      podcast_priority: feed.podcast_priority\n    }});\n  }\n}\nreturn out;\n"
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n  const title = ($json._podcast_name || \"Source\") + \" — \" + ($json._episode_title || \"Episode\");\n  const transcript = $json.transcript || \"\";\n  const chapters = JSON.parse($json.chapters_json || \"[]\");\n  const chaptersTextForProp = chapters.map(c => (c.headline || \"\") + \": \" + (c.gist || c.summary || \"\")).join(\" | \");\n  const tChunks = [];\n  for (let i = 0; i < transcript.length; i += 1900) tChunks.push(transcript.substring(i, i + 1900));\n  if (!tChunks.length) tChunks.push(\"\");\n  const tBlocks = tChunks.slice(0, 80).map(c => ({ object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: c } }] } }));\n  const chBlocks = chapters.length ? [\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Chapters\" } }] } },\n    ...chapters.map(c => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: ((c.headline || \"\") + \" — \" + (c.gist || c.summary || \"\")).substring(0, 2000) } }] } }))\n  ] : [];\n  return {\n    parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" },\n    properties: {\n      Title: { title: [{ text: { content: title.substring(0, 200) } }] },\n      Type: { select: { name: \"Source\" } },\n      \"Source Type\": { select: { name: $json.source_type === \"vimeo\" ? \"vimeo\" : \"podcast\" } },\n      Episode: { rich_text: [{ type: \"text\", text: { content: (($json._podcast_name || \"\") + \" — \" + ($json._episode_title || \"\")).substring(0, 2000), link: $json._episode_url ? { url: $json._episode_url } : null } }] },\n      Published: { date: { start: (($json._episode_published || \"\").substring(0, 10)) || null } },\n      \"Transcript Source\": { select: { name: $json.transcript_source || \"AssemblyAI\" } },\n      \"Transcript ID\": { rich_text: [{ text: { content: ($json.transcript_id || \"\").substring(0, 2000) } }] },\n      Chapters: { rich_text: [{ text: { content: chaptersTextForProp.substring(0, 2000) } }] },\n      Topics: { multi_select: ($json._default_topics || []).map(t => ({ name: t })) }\n    },\n    children: [\n      ...chBlocks,\n      { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Transcript\" } }] } },\n      ...tBlocks\n    ]\n  };\n})()) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "name": "Notion: Create Source Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3392,
+        320
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "source_page_id",
+              "type": "string",
+              "value": "={{ $json.id || \"\" }}"
+            },
+            {
+              "id": "2",
+              "name": "transcript",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.transcript }}"
+            },
+            {
+              "id": "3",
+              "name": "transcript_id",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.transcript_id || \"\" }}"
+            },
+            {
+              "id": "4",
+              "name": "transcript_source",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.transcript_source }}"
+            },
+            {
+              "id": "5",
+              "name": "_episode_title",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._episode_title }}"
+            },
+            {
+              "id": "6",
+              "name": "_episode_url",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._episode_url }}"
+            },
+            {
+              "id": "7",
+              "name": "_episode_published",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._episode_published }}"
+            },
+            {
+              "id": "8",
+              "name": "_podcast_name",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._podcast_name }}"
+            },
+            {
+              "id": "9",
+              "name": "_default_topics",
+              "type": "array",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._default_topics }}"
+            },
+            {
+              "id": "10",
+              "name": "_podcast_priority",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._podcast_priority || \"medium\" }}"
+            },
+            {
+              "id": "11",
+              "name": "source_type",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.source_type || \"podcast\" }}"
+            },
+            {
+              "id": "12",
+              "name": "chapters_json",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.chapters_json || \"[]\" }}"
+            },
+            {
+              "id": "13",
+              "name": "highlights_json",
+              "type": "string",
+              "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.highlights_json || \"[]\" }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Carry Source Page ID",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3616,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: {\n  url: 'https://natesnote.substack.com/feed',\n  podcast_name: \"Nate's Notebook\",\n  always_relevant: true,\n  default_topics: ['AI Strategy', 'Claude', 'Anthropic'],\n  podcast_priority: 'high'\n} }];"
+      },
+      "name": "Nate's Notebook Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v1/scrape",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $json.url, formats: [\"rawHtml\"], timeout: 30000 }) }}",
+        "options": {
+          "timeout": 45000
+        }
+      },
+      "name": "Firecrawl: Fetch Nate RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        528,
+        848
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Firecrawl API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "\nconst WINDOW_DAYS = 7;\nconst cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;\nconst item = $input.first().json;\nconst xml = (item.data && item.data.rawHtml) ? item.data.rawHtml : '';\nif (!xml) return [];\nfunction getTag(tag, block) {\n  const re = new RegExp('<' + tag + '(?:\\\\s[^>]*)?>([\\\\s\\\\S]*?)<\\\\/' + tag + '>', 'i');\n  const m = block.match(re);\n  if (!m) return '';\n  return m[1].replace(/^\\s*<!\\[CDATA\\[/, '').replace(/\\]\\]>\\s*$/, '').trim();\n}\nfunction getAttr(tag, name, block) {\n  const re = new RegExp('<' + tag + '[^>]*\\\\b' + name + '=\"([^\"]*)\"', 'i');\n  const m = block.match(re);\n  return m ? m[1] : '';\n}\nfunction pickUrl(block) {\n  const link = getTag('link', block);\n  if (link && /^https?:\\/\\//i.test(link)) return link;\n  const gpm = /<guid[^>]*isPermaLink=\"true\"[^>]*>([\\s\\S]*?)<\\/guid>/i.exec(block);\n  if (gpm) {\n    const v = gpm[1].replace(/^\\s*<!\\[CDATA\\[/, '').replace(/\\]\\]>\\s*$/, '').trim();\n    if (/^https?:\\/\\//i.test(v)) return v;\n  }\n  const g = getTag('guid', block);\n  if (g && /^https?:\\/\\//i.test(g)) return g;\n  return '';\n}\nconst out = [];\nconst itemRe = /<item(?:\\s[^>]*)?>[\\s\\S]*?<\\/item>/gi;\nlet m;\nwhile ((m = itemRe.exec(xml)) !== null) {\n  const block = m[0];\n  const pub = getTag('pubDate', block) || getTag('dc:date', block);\n  if (!pub) continue;\n  const t = new Date(pub).getTime();\n  if (isNaN(t) || t < cutoff) continue;\n  const title = getTag('title', block);\n  const episodeUrl = pickUrl(block);\n  const enclosureUrl = getAttr('enclosure', 'url', block);\n  if (!enclosureUrl) continue;\n  const descRaw = getTag('description', block) || '';\n  const descText = descRaw.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().substring(0, 500);\n  out.push({ json: {\n    title, link: episodeUrl,\n    isoDate: new Date(t).toISOString(), pubDate: pub,\n    contentSnippet: descText, audio_url: enclosureUrl,\n    podcast_name: \"Nate's Notebook\",\n    default_topics: ['AI Strategy', 'Claude', 'Anthropic'],\n    podcast_priority: 'high'\n  }});\n}\nreturn out;\n"
+      },
+      "name": "Nate's Notebook: Parse RSS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "name": "Merge: All RSS Episodes",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1040,
+        608
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "\nconst j = $json;\nconst safe = s => (s || '').replace(/[\\/\\\\:*?\"<>|]/g, '_').substring(0, 80);\nconst filename = safe(j.podcast_name) + ' — ' + safe(j.episode_title) + '.md';\n\nconst lines = [\n  '# ' + (j.episode_title || '(untitled)'),\n  '',\n  '**Podcast:** ' + (j.podcast_name || ''),\n  '**Date:** ' + (j.isoDate || ''),\n];\nif (j.episode_url) lines.push('**Episode:** ' + j.episode_url);\nif (j.transcript_id) lines.push('**Transcript ID:** ' + j.transcript_id);\nlines.push('', '---', '');\n\nif (j.chapters_json) {\n  try {\n    const chapters = JSON.parse(j.chapters_json);\n    if (chapters.length) {\n      lines.push('## Chapters', '');\n      for (const ch of chapters) {\n        const ts = Math.floor((ch.start || 0) / 1000);\n        const mm = String(Math.floor(ts / 60)).padStart(2, '0');\n        const ss = String(ts % 60).padStart(2, '0');\n        lines.push('- **' + mm + ':' + ss + '** — ' + (ch.headline || ch.gist || ''));\n      }\n      lines.push('');\n    }\n  } catch(e) {}\n}\n\nlines.push('## Transcript', '', j.transcript || '(no transcript)');\n\nconst content = lines.join('\\n');\nconst b64 = Buffer.from(content, 'utf8').toString('base64');\n\nreturn {\n  json: { ...j, _gdrive_filename: filename },\n  binary: {\n    transcript: {\n      data: b64,\n      mimeType: 'text/markdown',\n      fileName: filename,\n      fileExtension: 'md'\n    }\n  }\n};\n"
+      },
+      "name": "Google Drive: Prep Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3632,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "name": "={{ $json._gdrive_filename }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_FOLDER_ID",
+          "mode": "id"
+        },
+        "binaryPropertyName": "transcript",
+        "options": {}
+      },
+      "name": "Google Drive: Write Transcript",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3872,
+        440
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REPLACE_WITH_GOOGLEDRIVEOAUTH2API_CREDENTIAL_ID",
+          "name": "Google Drive - Alec"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Tue + Fri 10am PT": {
+      "main": [
+        [
+          {
+            "node": "Feed Config List",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Nate's Notebook Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup by URL": {
+      "main": [
+        [
+          {
+            "node": "Preserve Episode Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Relevance Gate": {
+      "main": [
+        [
+          {
+            "node": "Preserve Episode Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preserve Episode Metadata": {
+      "main": [
+        [
+          {
+            "node": "AssemblyAI: Submit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AssemblyAI: Submit": {
+      "main": [
+        [
+          {
+            "node": "AssemblyAI: Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AssemblyAI: Wait 30s": {
+      "main": [
+        [
+          {
+            "node": "AssemblyAI: Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AssemblyAI: Poll": {
+      "main": [
+        [
+          {
+            "node": "AssemblyAI: Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AssemblyAI: Completed?": {
+      "main": [
+        [
+          {
+            "node": "AssemblyAI: Extract Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AssemblyAI: Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AssemblyAI: Extract Transcript": {
+      "main": [
+        [
+          {
+            "node": "Merge Transcripts (RSS + Vimeo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Transcripts (RSS + Vimeo)": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create Source Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo: List Recent Videos": {
+      "main": [
+        [
+          {
+            "node": "Vimeo: Filter Public + Dedup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo: Filter Public + Dedup": {
+      "main": [
+        [
+          {
+            "node": "Vimeo: Preserve Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo: Preserve Metadata": {
+      "main": [
+        [
+          {
+            "node": "Vimeo: Get Text Tracks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo: Get Text Tracks": {
+      "main": [
+        [
+          {
+            "node": "Vimeo Has Caption?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo Has Caption?": {
+      "main": [
+        [
+          {
+            "node": "Vimeo: Fetch Caption VTT",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Vimeo: Get Download URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo: Fetch Caption VTT": {
+      "main": [
+        [
+          {
+            "node": "Vimeo: Parse VTT to Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo: Parse VTT to Text": {
+      "main": [
+        []
+      ]
+    },
+    "Vimeo: Get Download URL": {
+      "main": [
+        [
+          {
+            "node": "Vimeo: Set Audio URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo: Set Audio URL": {
+      "main": [
+        [
+          {
+            "node": "Vimeo AssemblyAI: Submit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo AssemblyAI: Submit": {
+      "main": [
+        [
+          {
+            "node": "Vimeo AssemblyAI: Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo AssemblyAI: Wait 30s": {
+      "main": [
+        [
+          {
+            "node": "Vimeo AssemblyAI: Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo AssemblyAI: Poll": {
+      "main": [
+        [
+          {
+            "node": "Vimeo AssemblyAI: Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo AssemblyAI: Completed?": {
+      "main": [
+        [
+          {
+            "node": "Vimeo AssemblyAI: Extract Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Vimeo AssemblyAI: Wait 30s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vimeo AssemblyAI: Extract Transcript": {
+      "main": [
+        []
+      ]
+    },
+    "Attach Episode Context": {
+      "main": [
+        [
+          {
+            "node": "Claude Extract Ideas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Extract Ideas": {
+      "main": [
+        [
+          {
+            "node": "Tag: Claude Sonnet 4.6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag: Claude Sonnet 4.6": {
+      "main": [
+        [
+          {
+            "node": "Parse Ideas + Split",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Ideas + Split": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create Idea Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feed Config List": {
+      "main": [
+        [
+          {
+            "node": "HTTP: Fetch Raw RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Fetch Raw RSS": {
+      "main": [
+        [
+          {
+            "node": "Parse + Filter + Enrich",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Filter + Enrich": {
+      "main": [
+        [
+          {
+            "node": "Merge: All RSS Episodes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Create Source Page": {
+      "main": [
+        [
+          {
+            "node": "Carry Source Page ID",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Google Drive: Prep Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carry Source Page ID": {
+      "main": [
+        [
+          {
+            "node": "Attach Episode Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nate's Notebook Config": {
+      "main": [
+        [
+          {
+            "node": "Firecrawl: Fetch Nate RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Firecrawl: Fetch Nate RSS": {
+      "main": [
+        [
+          {
+            "node": "Nate's Notebook: Parse RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nate's Notebook: Parse RSS": {
+      "main": [
+        [
+          {
+            "node": "Merge: All RSS Episodes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: All RSS Episodes": {
+      "main": [
+        [
+          {
+            "node": "Dedup by URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive: Prep Transcript": {
+      "main": [
+        [
+          {
+            "node": "Google Drive: Write Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "binaryMode": "separate",
+    "saveDataErrorExecution": "all",
+    "errorWorkflow": "HrwcI5OK2E2EZ8PV"
+  },
+  "nodeGroups": [],
+  "activeVersionId": "aaaaaaaa-0000-4000-8000-000000000103",
+  "versionCounter": 183,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-05-09T00:11:32.668Z",
+    "createdAt": "2026-05-09T00:11:32.668Z",
+    "versionId": "aaaaaaaa-0000-4000-8000-000000000103",
+    "workflowId": "oipwSYyOYDCFPz8N",
+    "nodes": [
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000104",
+        "name": "Tue + Fri 10am PT",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          0,
+          608
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 0 10 * * 2,5"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000105",
+        "name": "Dedup by URL",
+        "type": "n8n-nodes-base.removeDuplicates",
+        "typeVersion": 2,
+        "position": [
+          1088,
+          608
+        ],
+        "parameters": {
+          "operation": "removeItemsSeenInPreviousExecutions",
+          "dedupeValue": "={{ $json.link || $json.guid || ($json.enclosure && $json.enclosure.url) || $json.id || $json.title }}",
+          "options": {
+            "historySize": 10000
+          }
+        },
+        "disabled": false
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000106",
+        "name": "Relevance Gate",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1600,
+          608
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": false,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 1
+            },
+            "conditions": [
+              {
+                "id": "1",
+                "leftValue": "={{ $json.is_relevant }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000107",
+        "name": "Preserve Episode Metadata",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1872,
+          352
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "_episode_title",
+                "type": "string",
+                "value": "={{ $json.title }}"
+              },
+              {
+                "id": "2",
+                "name": "_episode_url",
+                "type": "string",
+                "value": "={{ $json.link }}"
+              },
+              {
+                "id": "3",
+                "name": "_episode_published",
+                "type": "string",
+                "value": "={{ $json.isoDate }}"
+              },
+              {
+                "id": "4",
+                "name": "_podcast_name",
+                "type": "string",
+                "value": "={{ $json.podcast_name }}"
+              },
+              {
+                "id": "5",
+                "name": "_default_topics",
+                "type": "array",
+                "value": "={{ $json.default_topics }}"
+              },
+              {
+                "id": "6",
+                "name": "audio_url",
+                "type": "string",
+                "value": "={{ $json.audio_url }}"
+              },
+              {
+                "id": "7",
+                "name": "_podcast_priority",
+                "type": "string",
+                "value": "={{ $json.podcast_priority }}"
+              },
+              {
+                "id": "8",
+                "name": "source_type",
+                "type": "string",
+                "value": "podcast"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000108",
+        "name": "AssemblyAI: Submit",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2128,
+          400
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.assemblyai.com/v2/transcript",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ audio_url: $(\"Preserve Episode Metadata\").item.json.audio_url, speech_model: \"universal\", speaker_labels: true, auto_chapters: true, auto_highlights: true, entity_detection: true, punctuate: true, format_text: true, word_boost: [\"Claude\",\"Anthropic\",\"OpenAI\",\"ChatGPT\",\"Sonnet\",\"Opus\",\"Haiku\",\"Gemini\",\"Grok\",\"Llama\",\"Mistral\",\"Cohere\",\"Perplexity\",\"GPT-5\",\"GPT-4o\",\"Codex\",\"Cursor\",\"MCP\",\"Model Context Protocol\",\"n8n\",\"Zapier\",\"Notion\",\"Vercel\",\"Supabase\",\"Agentic\",\"LLM\",\"RAG\",\"Fine-tuning\",\"Embedding\",\"Vector\",\"Inference\",\"Token\",\"Hallucination\",\"MMA\",\"Marketing + Media Alliance\",\"CMO\",\"CRO\",\"CAP\",\"ALTT\",\"ACE\",\"A3\",\"SIFT\",\"AURA\",\"ARC\",\"RAIL\",\"Nvidia\",\"H100\",\"Blackwell\",\"DeepSeek\",\"Qwen\",\"Kimi\"], boost_param: \"high\" }) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "0vt6EpLhFV54DMWf",
+            "name": "AssemblyAI API"
+          }
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000109",
+        "name": "AssemblyAI: Wait 30s",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          2384,
+          400
+        ],
+        "parameters": {
+          "amount": 30
+        },
+        "webhookId": "aaaaaaaa-0000-4000-8000-000000000110"
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000111",
+        "name": "AssemblyAI: Poll",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2640,
+          400
+        ],
+        "parameters": {
+          "url": "=https://api.assemblyai.com/v2/transcript/{{ $json.id }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "0vt6EpLhFV54DMWf",
+            "name": "AssemblyAI API"
+          }
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000112",
+        "name": "AssemblyAI: Completed?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          2912,
+          400
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "1",
+                "leftValue": "={{ $json.status }}",
+                "rightValue": "completed",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000113",
+        "name": "AssemblyAI: Extract Transcript",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          3168,
+          320
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "transcript",
+                "type": "string",
+                "value": "={{ ($json.utterances && $json.utterances.length) ? $json.utterances.map(u => (u.speaker ? \"Speaker \" + u.speaker + \": \" : \"\") + u.text).join(\"\\n\") : $json.text }}"
+              },
+              {
+                "id": "2",
+                "name": "transcript_source",
+                "type": "string",
+                "value": "AssemblyAI"
+              },
+              {
+                "id": "3",
+                "name": "transcript_id",
+                "type": "string",
+                "value": "={{ $json.id }}"
+              },
+              {
+                "id": "4",
+                "name": "chapters_json",
+                "type": "string",
+                "value": "={{ JSON.stringify($json.chapters || []) }}"
+              },
+              {
+                "id": "5",
+                "name": "highlights_json",
+                "type": "string",
+                "value": "={{ JSON.stringify((($json.auto_highlights_result || {}).results) || []) }}"
+              },
+              {
+                "id": "6",
+                "name": "_episode_title",
+                "type": "string",
+                "value": "={{ $(\"Preserve Episode Metadata\").item.json._episode_title }}"
+              },
+              {
+                "id": "7",
+                "name": "_episode_url",
+                "type": "string",
+                "value": "={{ $(\"Preserve Episode Metadata\").item.json._episode_url }}"
+              },
+              {
+                "id": "8",
+                "name": "_episode_published",
+                "type": "string",
+                "value": "={{ $(\"Preserve Episode Metadata\").item.json._episode_published }}"
+              },
+              {
+                "id": "9",
+                "name": "_podcast_name",
+                "type": "string",
+                "value": "={{ $(\"Preserve Episode Metadata\").item.json._podcast_name }}"
+              },
+              {
+                "id": "10",
+                "name": "_default_topics",
+                "type": "array",
+                "value": "={{ $(\"Preserve Episode Metadata\").item.json._default_topics }}"
+              },
+              {
+                "id": "11",
+                "name": "_podcast_priority",
+                "type": "string",
+                "value": "={{ $(\"Preserve Episode Metadata\").item.json._podcast_priority }}"
+              },
+              {
+                "id": "12",
+                "name": "source_type",
+                "type": "string",
+                "value": "podcast"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000114",
+        "name": "Merge Transcripts (RSS + Vimeo)",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3.2,
+        "position": [
+          3424,
+          1400
+        ],
+        "parameters": {
+          "mode": "append",
+          "numberInputs": 1
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000115",
+        "name": "Vimeo: List Recent Videos",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          288,
+          2400
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.vimeo.com/me/videos",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.vimeo.*+json;version=3.4"
+              }
+            ]
+          },
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "sort",
+                "value": "date"
+              },
+              {
+                "name": "direction",
+                "value": "desc"
+              },
+              {
+                "name": "per_page",
+                "value": "25"
+              },
+              {
+                "name": "fields",
+                "value": "uri,name,description,created_time,privacy,duration,link,metadata"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "ftgCjJWOeEdvQ4Kj",
+            "name": "Vimeo PAT"
+          }
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000116",
+        "name": "Vimeo: Filter Public + Dedup",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          560,
+          2400
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const items = $input.all();\nconst staticData = $getWorkflowStaticData('global');\nif (!staticData.vimeoSeen) staticData.vimeoSeen = {};\nconst seen = staticData.vimeoSeen;\nconst now = Date.now();\nfor (const k of Object.keys(seen)) { if (now - seen[k] > 90*24*3600*1000) delete seen[k]; }\nconst out = [];\nconst allowedPrivacy = ['anybody','unlisted'];\nfor (const it of items) {\n  const videos = (it.json && it.json.data) || [];\n  for (const v of videos) {\n    if (!v || !v.uri) continue;\n    const priv = (v.privacy && v.privacy.view) || 'nobody';\n    if (!allowedPrivacy.includes(priv)) continue;\n    if (seen[v.uri]) continue;\n    seen[v.uri] = now;\n    const videoId = String(v.uri).replace('/videos/','').trim();\n    out.push({ json: { video_id: videoId, video_uri: v.uri, name: v.name || '', description: v.description || '', created_time: v.created_time || '', link: v.link || '', privacy_view: priv, duration: v.duration || 0 } });\n  }\n}\nreturn out;"
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000117",
+        "name": "Vimeo: Preserve Metadata",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          832,
+          2400
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "_episode_title",
+                "type": "string",
+                "value": "={{ $json.name }}"
+              },
+              {
+                "id": "2",
+                "name": "_episode_url",
+                "type": "string",
+                "value": "={{ $json.link }}"
+              },
+              {
+                "id": "3",
+                "name": "_episode_published",
+                "type": "string",
+                "value": "={{ $json.created_time }}"
+              },
+              {
+                "id": "4",
+                "name": "_podcast_name",
+                "type": "string",
+                "value": "MMA Vimeo"
+              },
+              {
+                "id": "5",
+                "name": "_default_topics",
+                "type": "array",
+                "value": "={{ [\"Marketing AI\",\"AI Strategy\"] }}"
+              },
+              {
+                "id": "6",
+                "name": "_podcast_priority",
+                "type": "string",
+                "value": "high"
+              },
+              {
+                "id": "7",
+                "name": "video_id",
+                "type": "string",
+                "value": "={{ $json.video_id }}"
+              },
+              {
+                "id": "8",
+                "name": "audio_url",
+                "type": "string",
+                "value": ""
+              },
+              {
+                "id": "9",
+                "name": "source_type",
+                "type": "string",
+                "value": "vimeo"
+              }
+            ]
+          },
+          "includeOtherFields": true,
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000118",
+        "name": "Vimeo: Get Text Tracks",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1104,
+          2400
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.vimeo.com/videos/{{ $json.video_id }}/texttracks",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.vimeo.*+json;version=3.4"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 60000,
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            }
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "ftgCjJWOeEdvQ4Kj",
+            "name": "Vimeo PAT"
+          }
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000119",
+        "name": "Vimeo Has Caption?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1376,
+          2400
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": false,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 1
+            },
+            "conditions": [
+              {
+                "id": "1",
+                "leftValue": "={{ ($json.data && $json.data.find(t => t.active && typeof t.language === \"string\" && t.language.toLowerCase().startsWith(\"en\")) && $json.data.find(t => t.active && typeof t.language === \"string\" && t.language.toLowerCase().startsWith(\"en\")).link) ? \"yes\" : \"no\" }}",
+                "rightValue": "yes",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000120",
+        "name": "Vimeo: Fetch Caption VTT",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1648,
+          2272
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.data.find(t => t.active && typeof t.language === \"string\" && t.language.toLowerCase().startsWith(\"en\")).link }}",
+          "options": {
+            "timeout": 60000,
+            "response": {
+              "response": {
+                "responseFormat": "text"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000121",
+        "name": "Vimeo: Parse VTT to Text",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1920,
+          2272
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const items = $input.all();\nconst metaAll = $('Vimeo: Preserve Metadata').all();\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const raw = items[i].json && (items[i].json.data || items[i].json.body || '');\n  const text = typeof raw === 'string' ? raw : JSON.stringify(raw);\n  const lines = text.split(/\\r?\\n/);\n  const plain = [];\n  for (const line of lines) {\n    if (!line) continue;\n    if (/^WEBVTT/i.test(line)) continue;\n    if (/^NOTE/i.test(line)) continue;\n    if (/^\\d+$/.test(line.trim())) continue;\n    if (line.includes('-->')) continue;\n    if (/^(Kind|Language|STYLE|Region):/i.test(line)) continue;\n    plain.push(line.replace(/<[^>]+>/g,'').trim());\n  }\n  const transcript = plain.filter(Boolean).join(' ');\n  const meta = metaAll[i] ? metaAll[i].json : (metaAll[0] ? metaAll[0].json : {});\n  out.push({ json: { transcript, transcript_source: 'Vimeo', _episode_title: meta._episode_title || '', _episode_url: meta._episode_url || '', _episode_published: meta._episode_published || '', _podcast_name: meta._podcast_name || 'MMA Vimeo', _default_topics: meta._default_topics || [], _podcast_priority: meta._podcast_priority || 'high', source_type: 'vimeo' } });\n}\nreturn out;"
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000122",
+        "name": "Vimeo: Get Download URL",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1648,
+          2528
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "=https://api.vimeo.com/videos/{{ $(\"Vimeo: Preserve Metadata\").item.json.video_id }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/vnd.vimeo.*+json;version=3.4"
+              }
+            ]
+          },
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "fields",
+                "value": "download,files"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "ftgCjJWOeEdvQ4Kj",
+            "name": "Vimeo PAT"
+          }
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000123",
+        "name": "Vimeo: Set Audio URL",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1920,
+          2528
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "audio_url",
+                "type": "string",
+                "value": "={{ (() => { const files = ($json.files || []); const mp4 = files.filter(f => f && f.type && f.type.includes(\"mp4\") && f.link); if (mp4.length === 0) return (files[0] && files[0].link) || \"\"; mp4.sort((a,b) => (a.size||0) - (b.size||0)); return mp4[0].link || \"\"; })() }}"
+              },
+              {
+                "id": "2",
+                "name": "_episode_title",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._episode_title }}"
+              },
+              {
+                "id": "3",
+                "name": "_episode_url",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._episode_url }}"
+              },
+              {
+                "id": "4",
+                "name": "_episode_published",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._episode_published }}"
+              },
+              {
+                "id": "5",
+                "name": "_podcast_name",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._podcast_name }}"
+              },
+              {
+                "id": "6",
+                "name": "_default_topics",
+                "type": "array",
+                "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._default_topics }}"
+              },
+              {
+                "id": "7",
+                "name": "_podcast_priority",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json._podcast_priority }}"
+              },
+              {
+                "id": "8",
+                "name": "source_type",
+                "type": "string",
+                "value": "vimeo"
+              },
+              {
+                "id": "9",
+                "name": "video_id",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Preserve Metadata\").item.json.video_id }}"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000124",
+        "name": "Vimeo AssemblyAI: Submit",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2192,
+          2528
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.assemblyai.com/v2/transcript",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ audio_url: $(\"Vimeo: Set Audio URL\").item.json.audio_url, speech_model: \"universal\", speaker_labels: true, auto_chapters: true, punctuate: true, format_text: true, word_boost: [\"Claude\",\"Anthropic\",\"OpenAI\",\"ChatGPT\",\"Sonnet\",\"Opus\",\"Haiku\",\"Gemini\",\"MCP\",\"Marketing + Media Alliance\",\"MMA\",\"CMO\",\"CAP\",\"ALTT\",\"ACE\",\"A3\",\"SIFT\",\"AURA\",\"ARC\",\"RAIL\"], boost_param: \"high\" }) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "0vt6EpLhFV54DMWf",
+            "name": "AssemblyAI API"
+          }
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000125",
+        "name": "Vimeo AssemblyAI: Wait 30s",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          2448,
+          2528
+        ],
+        "parameters": {
+          "amount": 30
+        },
+        "webhookId": "aaaaaaaa-0000-4000-8000-000000000126"
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000127",
+        "name": "Vimeo AssemblyAI: Poll",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2704,
+          2528
+        ],
+        "parameters": {
+          "url": "=https://api.assemblyai.com/v2/transcript/{{ $json.id }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "0vt6EpLhFV54DMWf",
+            "name": "AssemblyAI API"
+          }
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000128",
+        "name": "Vimeo AssemblyAI: Completed?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          2976,
+          2528
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "1",
+                "leftValue": "={{ $json.status }}",
+                "rightValue": "completed",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000129",
+        "name": "Vimeo AssemblyAI: Extract Transcript",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          3232,
+          2528
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "transcript",
+                "type": "string",
+                "value": "={{ $json.text }}"
+              },
+              {
+                "id": "2",
+                "name": "transcript_source",
+                "type": "string",
+                "value": "AssemblyAI"
+              },
+              {
+                "id": "3",
+                "name": "_episode_title",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._episode_title }}"
+              },
+              {
+                "id": "4",
+                "name": "_episode_url",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._episode_url }}"
+              },
+              {
+                "id": "5",
+                "name": "_episode_published",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._episode_published }}"
+              },
+              {
+                "id": "6",
+                "name": "_podcast_name",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._podcast_name }}"
+              },
+              {
+                "id": "7",
+                "name": "_default_topics",
+                "type": "array",
+                "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._default_topics }}"
+              },
+              {
+                "id": "8",
+                "name": "_podcast_priority",
+                "type": "string",
+                "value": "={{ $(\"Vimeo: Set Audio URL\").item.json._podcast_priority }}"
+              },
+              {
+                "id": "9",
+                "name": "source_type",
+                "type": "string",
+                "value": "vimeo"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000130",
+        "name": "Attach Episode Context",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          3680,
+          1400
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "transcript",
+                "type": "string",
+                "value": "={{ $json.transcript }}"
+              },
+              {
+                "id": "2",
+                "name": "transcript_source",
+                "type": "string",
+                "value": "={{ $json.transcript_source }}"
+              },
+              {
+                "id": "3",
+                "name": "transcript_id",
+                "type": "string",
+                "value": "={{ $json.transcript_id || \"\" }}"
+              },
+              {
+                "id": "4",
+                "name": "source_page_id",
+                "type": "string",
+                "value": "={{ $json.source_page_id || \"\" }}"
+              },
+              {
+                "id": "5",
+                "name": "_episode_title",
+                "type": "string",
+                "value": "={{ $json._episode_title }}"
+              },
+              {
+                "id": "6",
+                "name": "_episode_url",
+                "type": "string",
+                "value": "={{ $json._episode_url }}"
+              },
+              {
+                "id": "7",
+                "name": "_episode_published",
+                "type": "string",
+                "value": "={{ $json._episode_published }}"
+              },
+              {
+                "id": "8",
+                "name": "_podcast_name",
+                "type": "string",
+                "value": "={{ $json._podcast_name }}"
+              },
+              {
+                "id": "9",
+                "name": "_default_topics",
+                "type": "array",
+                "value": "={{ $json._default_topics }}"
+              },
+              {
+                "id": "10",
+                "name": "_podcast_priority",
+                "type": "string",
+                "value": "={{ $json._podcast_priority || \"medium\" }}"
+              },
+              {
+                "id": "11",
+                "name": "source_type",
+                "type": "string",
+                "value": "={{ $json.source_type || \"podcast\" }}"
+              },
+              {
+                "id": "12",
+                "name": "chapters_json",
+                "type": "string",
+                "value": "={{ $json.chapters_json || \"[]\" }}"
+              },
+              {
+                "id": "13",
+                "name": "highlights_json",
+                "type": "string",
+                "value": "={{ $json.highlights_json || \"[]\" }}"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000131",
+        "name": "Claude Extract Ideas",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          3952,
+          1272
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-6\", max_tokens: 16000, system: [{ type: \"text\", text: \"You extract neutral, objective research material from podcast/video transcripts for Alec Foster\\u0027s content pipeline. Alec is Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Alec\\u0027s core interests and areas of expertise (use these to score Relevance): Claude (all Anthropic products), Claude Code and agent SDKs, agentic AI, AI governance, responsible AI, AI safety, marketing AI, enterprise AI adoption, MCP / Model Context Protocol, prompt engineering, LLM evals, AI strategy for CMOs, MMA frameworks (ALTT, ACE, CAP, AURA, RAIL, ARC, SIFT). Output is neutral reference stock, not first-person drafts. Calibrate depth by priority tier: HIGH = 4-8 ideas. MEDIUM = 2-5. LOW = 0-3. Transcripts may be speaker-diarized (Speaker A: / Speaker B:) — map labels to real names when introductions reveal them. Be generous with depth.\", cache_control: { type: \"ephemeral\" } }], messages: [{ role: \"user\", content: \"Extract every distinct content-worthy topic from this \" + ($json.source_type === \"vimeo\" ? \"Vimeo video\" : \"podcast episode\") + \".\\nSource type: \" + ($json.source_type || \"podcast\") + \"\\nPriority tier: \" + (($json._podcast_priority || \"medium\").toUpperCase()) + \"\\n\\nFor EACH idea return:\\n\" + \"- topic_headline: punchy, specific (not generic)\\n\" + \"- hook: 2-3 sentences\\n\" + \"- key_points: 5-10 bullets, each >=15 words, with numbers/names/specifics from the transcript\\n\" + \"- observations: 2-5 secondary bullets of nuance, context, or counterpoints\\n\" + \"- tips: 0-5 actionable takeaways (empty array if analytical)\\n\" + \"- quotes: 2-4 {speaker, quote, timestamp}. INCLUDE both direct host/guest quotes AND quotes attributed to cited third parties (researcher, company, paper) — for those use the ORIGINAL source as speaker (e.g. \\\"Dario Amodei (cited by host)\\\"). Use real names when intros reveal speaker identities. Quote must be >=10 words verbatim. Omit the entry rather than returning an empty string.\\n\" + \"- why_it_matters: 3-5 sentences with Alec/MMA angle when relevant\\n\" + \"- open_question: 1 sentence\\n\" + \"- draft_angle: 1-2 sentence post/infographic spine\\n\" + \"- further_reading: 0-4 {title, url} — only if a real URL is explicit/obvious. Never fabricate.\\n\" + \"- topics: (Claude|Agents|AI Governance|Marketing AI|Measurement|AI Strategy|LLMs|MCP|Voice AI|AI Safety|Enterprise AI|Creator Economy|Policy|Research|Content|Prompt Engineering|Reddit/Search|OpenAI|Anthropic|Google|Meta|Codex)\\n\" + \"- audience: (Marketers|AI Practitioners|Execs/CMOs|Governance|Builders|General)\\n\" + \"- hot_take_potential: High|Medium|Low — contrarian/debate-worthy\\n\" + \"- utility: High|Medium|Low — practical/educational value\\n\" + \"- relevance: High|Medium|Low — fit to ALEC\\u0027S INTERESTS (Claude/Claude Code, agentic AI, AI governance, responsible AI, marketing AI, enterprise AI, MCP, prompt engineering, MMA frameworks). High = Alec has clear standing/expertise to speak publicly on this; Low = outside his lane (e.g. hardware deep-dives, consumer celebrity AI news, non-AI business stories). Be honest — not every idea needs to be High.\\n\" + \"- format: Hot Take|Explainer|How-To|Framework|Announcement|Case Study\\n\\n\" + \"Chapter markers (guide for idea boundaries, optional):\\n\" + ($json.chapters_json && $json.chapters_json !== \"[]\" ? (JSON.parse($json.chapters_json).slice(0, 25).map(c => \"- \" + (c.headline || \"\") + \": \" + (c.gist || c.summary || \"\")).join(\"\\n\")) : \"(none)\") + \"\\n\\n\" + \"AssemblyAI auto-highlights (quote candidates, optional):\\n\" + ($json.highlights_json && $json.highlights_json !== \"[]\" ? (JSON.parse($json.highlights_json).slice(0, 15).map(h => \"- \" + (h.text || \"\")).join(\"\\n\")) : \"(none)\") + \"\\n\\n\" + \"Ignore sponsor reads, intros/outros, promos. Return ONLY JSON:\\n\" + \"{\\\"episode_summary\\\":\\\"3-5 sentence overview\\\",\\\"ideas\\\":[...]}\\n\\n\" + \"Episode: \" + $json._episode_title + \"\\nPodcast: \" + $json._podcast_name + \"\\nPublished: \" + $json._episode_published + \"\\n\\nTranscript:\\n\" + $json.transcript }] }) }}",
+          "options": {
+            "timeout": 300000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "hrJsx0jwWYoqTin3",
+            "name": "Anthropic API"
+          }
+        },
+        "onError": "continueRegularOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000132",
+        "name": "Tag: Claude Sonnet 4.6",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          4224,
+          1144
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "extraction_model",
+                "type": "string",
+                "value": "Sonnet 4.6"
+              },
+              {
+                "id": "2",
+                "name": "_episode_title",
+                "type": "string",
+                "value": "={{ $(\"Attach Episode Context\").item.json._episode_title }}"
+              },
+              {
+                "id": "3",
+                "name": "_episode_url",
+                "type": "string",
+                "value": "={{ $(\"Attach Episode Context\").item.json._episode_url }}"
+              },
+              {
+                "id": "4",
+                "name": "_episode_published",
+                "type": "string",
+                "value": "={{ $(\"Attach Episode Context\").item.json._episode_published }}"
+              },
+              {
+                "id": "5",
+                "name": "_podcast_name",
+                "type": "string",
+                "value": "={{ $(\"Attach Episode Context\").item.json._podcast_name }}"
+              },
+              {
+                "id": "6",
+                "name": "_default_topics",
+                "type": "array",
+                "value": "={{ $(\"Attach Episode Context\").item.json._default_topics }}"
+              },
+              {
+                "id": "7",
+                "name": "transcript_source",
+                "type": "string",
+                "value": "={{ $(\"Attach Episode Context\").item.json.transcript_source }}"
+              },
+              {
+                "id": "8",
+                "name": "source_type",
+                "type": "string",
+                "value": "={{ $(\"Attach Episode Context\").item.json.source_type }}"
+              }
+            ]
+          },
+          "includeOtherFields": true,
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000133",
+        "name": "Parse Ideas + Split",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          4736,
+          1400
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const TOPIC_ALIASES = {\n  \"google gemini\": \"Google\", \"gemini\": \"Google\", \"google\": \"Google\",\n  \"chatgpt\": \"OpenAI\", \"gpt-5\": \"OpenAI\", \"gpt-4\": \"OpenAI\", \"openai\": \"OpenAI\",\n  \"anthropic\": \"Anthropic\", \"claude sonnet\": \"Claude\", \"claude opus\": \"Claude\", \"claude haiku\": \"Claude\", \"claude\": \"Claude\",\n  \"meta ai\": \"Meta\", \"llama\": \"Meta\", \"meta\": \"Meta\",\n  \"agent\": \"Agents\", \"agents\": \"Agents\", \"agentic\": \"Agents\", \"agentic ai\": \"Agents\", \"ai agent\": \"Agents\",\n  \"governance\": \"AI Governance\", \"ai governance\": \"AI Governance\", \"responsible ai\": \"AI Governance\", \"ethics\": \"AI Governance\", \"ai ethics\": \"AI Governance\",\n  \"safety\": \"AI Safety\", \"ai safety\": \"AI Safety\", \"alignment\": \"AI Safety\",\n  \"policy\": \"Policy\", \"regulation\": \"Policy\", \"regulatory\": \"Policy\", \"eu ai act\": \"Policy\",\n  \"marketing\": \"Marketing AI\", \"marketing ai\": \"Marketing AI\", \"advertising\": \"Marketing AI\", \"adtech\": \"Marketing AI\", \"personalization\": \"Marketing AI\",\n  \"measurement\": \"Measurement\", \"attribution\": \"Measurement\", \"analytics\": \"Measurement\",\n  \"strategy\": \"AI Strategy\", \"ai strategy\": \"AI Strategy\", \"enterprise strategy\": \"AI Strategy\",\n  \"llm\": \"LLMs\", \"llms\": \"LLMs\", \"large language model\": \"LLMs\", \"foundation model\": \"LLMs\",\n  \"mcp\": \"MCP\", \"model context protocol\": \"MCP\",\n  \"voice\": \"Voice AI\", \"voice ai\": \"Voice AI\", \"tts\": \"Voice AI\", \"stt\": \"Voice AI\",\n  \"enterprise\": \"Enterprise AI\", \"enterprise ai\": \"Enterprise AI\", \"b2b ai\": \"Enterprise AI\",\n  \"creator\": \"Creator Economy\", \"creator economy\": \"Creator Economy\",\n  \"research\": \"Research\", \"paper\": \"Research\", \"arxiv\": \"Research\",\n  \"content\": \"Content\",\n  \"prompt\": \"Prompt Engineering\", \"prompt engineering\": \"Prompt Engineering\", \"prompting\": \"Prompt Engineering\",\n  \"search\": \"Reddit/Search\", \"reddit\": \"Reddit/Search\", \"perplexity\": \"Reddit/Search\",\n  \"codex\": \"Codex\", \"openai codex\": \"Codex\", \"codex cli\": \"Codex\"\n};\nconst VALID_TOPICS = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nfunction normalizeTopics(topics) {\n  const out = new Set();\n  for (const t of (topics || [])) {\n    if (!t) continue;\n    const raw = String(t).trim();\n    if (VALID_TOPICS.has(raw)) { out.add(raw); continue; }\n    const lc = raw.toLowerCase();\n    if (TOPIC_ALIASES[lc]) { out.add(TOPIC_ALIASES[lc]); continue; }\n    // fuzzy contains\n    for (const [alias, canon] of Object.entries(TOPIC_ALIASES)) {\n      if (lc.includes(alias)) { out.add(canon); break; }\n    }\n  }\n  return Array.from(out);\n}\nconst items = $input.all();\nconst out = [];\nlet skipped = 0;\nfor (let i = 0; i < items.length; i++) {\n  const d = items[i].json;\n  const raw = (d.content && d.content[0] && d.content[0].text) ? d.content[0].text : \"{}\";\n  const cleaned = raw.replace(/^\\x60\\x60\\x60json\\s*/i, \"\").replace(/\\x60\\x60\\x60\\s*$/, \"\").trim();\n  const ctx = d;\n  let parsed;\n  try { parsed = JSON.parse(cleaned); } catch (e) {\n    out.push({ json: {\n      _parse_error: e.message, raw: raw.substring(0, 500),\n      episode_url: ctx._episode_url,\n      topic_headline: \"PARSE FAILED: \" + (ctx._episode_title || \"unknown\"),\n      hook: \"Extraction response could not be parsed as JSON.\",\n      key_points: [], observations: [], tips: [], quotes: [], why_it_matters: \"\",\n      open_question: \"\", draft_angle: \"\", further_reading: [], topics: [], audience: [],\n      hot_take_potential: \"Low\", utility: \"Low\", relevance: \"Low\", format: \"Explainer\",\n      episode_title: ctx._episode_title, episode_published: ctx._episode_published,\n      podcast_name: ctx._podcast_name, merged_topics: [],\n      extraction_model: \"Sonnet 4.6\",\n      transcript_source: ctx.transcript_source || \"Unknown\",\n      transcript_id: ctx.transcript_id || \"\",\n      source_page_id: ctx.source_page_id || \"\",\n      source_type: ctx.source_type || \"podcast\"\n    } });\n    continue;\n  }\n  const ideas = parsed.ideas || [];\n  for (const idea of ideas) {\n    const rel = idea.relevance || \"Medium\";\n    const util = idea.utility || \"Medium\";\n    // NOISE FILTER: drop only if BOTH relevance and utility are Low\n    if (rel === \"Low\" && util === \"Low\") { skipped++; continue; }\n    const mergedTopics = Array.from(new Set([\n      ...normalizeTopics(idea.topics || []),\n      ...normalizeTopics(ctx._default_topics || [])\n    ]));\n    out.push({ json: {\n      topic_headline: idea.topic_headline || \"Untitled\",\n      hook: idea.hook || \"\",\n      key_points: idea.key_points || [],\n      observations: idea.observations || [],\n      tips: idea.tips || [],\n      quotes: (idea.quotes || []).filter(q => q && q.quote && String(q.quote).trim().length >= 10),\n      why_it_matters: idea.why_it_matters || \"\",\n      open_question: idea.open_question || \"\",\n      draft_angle: idea.draft_angle || \"\",\n      further_reading: (idea.further_reading || []).filter(r => r && r.url && r.title),\n      topics: idea.topics || [],\n      audience: idea.audience || [],\n      hot_take_potential: idea.hot_take_potential || \"Medium\",\n      utility: util,\n      relevance: rel,\n      format: idea.format || \"Explainer\",\n      episode_summary: parsed.episode_summary || \"\",\n      episode_title: ctx._episode_title || \"\",\n      episode_url: ctx._episode_url || \"\",\n      episode_published: ctx._episode_published || \"\",\n      podcast_name: ctx._podcast_name || \"\",\n      merged_topics: mergedTopics,\n      extraction_model: \"Sonnet 4.6\",\n      transcript_source: ctx.transcript_source || \"Unknown\",\n      transcript_id: ctx.transcript_id || \"\",\n      source_page_id: ctx.source_page_id || \"\",\n      source_type: ctx.source_type || \"podcast\"\n    } });\n  }\n}\nconsole.log(\"Noise filter skipped\", skipped, \"low-rel-low-util ideas\");\nreturn out;\n"
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000134",
+        "name": "Notion: Create Idea Page",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          4992,
+          1400
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" }, properties: { Title: { title: [{ text: { content: ($json.topic_headline || \"Untitled\").substring(0, 200) } }] }, Episode: { rich_text: [{ type: \"text\", text: { content: (($json.podcast_name || \"\") + \" — \" + ($json.episode_title || \"\")).substring(0, 2000), link: $json.episode_url ? { url: $json.episode_url } : null } }] }, \"Source Type\": { select: { name: $json.source_type === \"vimeo\" ? \"vimeo\" : \"podcast\" } }, Type: { select: { name: \"Idea\" } }, Published: { date: { start: ($json.episode_published || \"\").substring(0, 10) || null } }, \"Hot Take Potential\": { select: { name: $json.hot_take_potential || \"Medium\" } }, Utility: { select: { name: $json.utility || \"Medium\" } }, Relevance: { select: { name: $json.relevance || \"Medium\" } }, Format: { select: { name: $json.format || \"Explainer\" } }, Topics: { multi_select: ($json.merged_topics || []).map(t => ({ name: t })) }, Audience: { multi_select: ($json.audience || []).map(a => ({ name: a })) }, Summary: { rich_text: [{ text: { content: ($json.hook || \"\").substring(0, 2000) } }] }, \"Extraction Model\": { select: { name: $json.extraction_model || \"Sonnet 4.6\" } }, \"Transcript Source\": { select: { name: $json.transcript_source || \"Unknown\" } }, \"Transcript ID\": { rich_text: [{ text: { content: ($json.transcript_id || \"\").substring(0, 2000) } }] }, \"Episode Source\": $json.source_page_id ? { relation: [{ id: $json.source_page_id }] } : { relation: [] } }, children: [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Hook\" } }] } }, { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: ($json.hook || \"\").substring(0, 2000) } }] } }, { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Key Points\" } }] } }, ...($json.key_points || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })), ...(($json.observations || []).length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Observations\" } }] } }, ...($json.observations || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } }))] : []), ...(($json.tips || []).length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tips\" } }] } }, ...($json.tips || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } }))] : []), ...(($json.quotes || []).length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Quotes\" } }] } }, ...($json.quotes || []).map(q => ({ object: \"block\", type: \"quote\", quote: { rich_text: [{ type: \"text\", text: { content: (\"\\\"\" + (q.quote || \"\") + \"\\\" — \" + (q.speaker || \"Unknown\") + (q.timestamp ? \" (\" + q.timestamp + \")\" : \"\")).substring(0, 2000) } }] } }))] : []), { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Why It Matters\" } }] } }, { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: ($json.why_it_matters || \"\").substring(0, 2000) } }] } }, { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Open Question\" } }] } }, { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: ($json.open_question || \"\").substring(0, 2000) } }] } }, { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Draft Angle\" } }] } }, { object: \"block\", type: \"callout\", callout: { icon: { type: \"emoji\", emoji: \"💡\" }, rich_text: [{ type: \"text\", text: { content: ($json.draft_angle || \"\").substring(0, 2000) } }] } }, ...(($json.further_reading || []).length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Further Reading\" } }] } }, ...($json.further_reading || []).map(r => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: (r.title || r.url || \"\").substring(0, 2000), link: r.url ? { url: r.url } : null } }] } }))] : []), { object: \"block\", type: \"divider\", divider: {} }, { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: \"Source: \" + ($json.podcast_name || \"\") + \" — \" + ($json.episode_title || \"\") + \" [model: \" + ($json.extraction_model || \"\") + \" | transcript: \" + ($json.transcript_source || \"\") + \" | type: \" + ($json.source_type || \"podcast\") + \"]\" } }] } } ] }) }}",
+          "options": {
+            "batching": {
+              "batch": {
+                "batchSize": 3,
+                "batchInterval": 400
+              }
+            },
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        },
+        "onError": "continueRegularOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000135",
+        "name": "Feed Config List",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          288,
+          608
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// Emit one item per podcast feed, carrying metadata so the downstream\n// enrich step can attach it to each RSS item. Nate's Notebook excluded\n// (Substack private feed 403s from n8n cloud IPs — fix separately with HTTP+UA).\nconst feeds = [\n  { url: 'https://www.patreon.com/rss/AIDailyBrief?auth=REDACTED_ROTATE_ME&show=1430346', podcast_name: 'AI Daily Brief', always_relevant: true, default_topics: ['AI Strategy'], podcast_priority: 'high' },\n  { url: 'https://feeds.megaphone.fm/marketingai', podcast_name: 'The Artificial Intelligence Show', always_relevant: true, default_topics: ['Marketing AI'], podcast_priority: 'high' },\n  { url: 'https://feeds.simplecast.com/l2i9YnTd', podcast_name: 'Hard Fork', always_relevant: false, default_topics: [], podcast_priority: 'high' },\n  { url: 'https://feeds.simplecast.com/Rz_NWJDG', podcast_name: 'Decoding AI for Marketing', always_relevant: true, default_topics: ['Marketing AI','Measurement'], podcast_priority: 'high' },\n  { url: 'https://feeds.megaphone.fm/buildingbettercmos', podcast_name: 'Building Better CMOs', always_relevant: false, default_topics: [], podcast_priority: 'low' },\n  { url: 'https://rss.libsyn.com/shows/45920/destinations/151434.xml', podcast_name: 'AI in Business', always_relevant: true, default_topics: ['Enterprise AI'], podcast_priority: 'medium' },\n  { url: 'https://feeds.megaphone.fm/PDP6186156462', podcast_name: 'Frontier CMO', always_relevant: false, default_topics: [], podcast_priority: 'low' },\n  { url: 'https://rss.art19.com/the-cmo-podcast', podcast_name: 'The CMO Podcast', always_relevant: false, default_topics: [], podcast_priority: 'low' },\n  { url: 'https://feeds.buzzsprout.com/2418777.rss', podcast_name: 'AI Explained', always_relevant: true, default_topics: ['Research'], podcast_priority: 'high' },\n  { url: 'https://changelog.com/practicalai/feed', podcast_name: 'Practical AI', always_relevant: true, default_topics: ['AI Strategy'], podcast_priority: 'medium' },\n  { url: 'https://feeds.megaphone.fm/vergecast', podcast_name: 'The Vergecast', always_relevant: false, default_topics: ['Policy'], podcast_priority: 'medium' },\n  { url: 'https://rss.buzzsprout.com/1786427.rss', podcast_name: 'The Good Robot', always_relevant: true, default_topics: ['AI Governance','AI Safety'], podcast_priority: 'high' },\n  { url: 'https://feeds.transistor.fm/in-ai-we-trust', podcast_name: 'In AI We Trust', always_relevant: false, default_topics: ['AI Governance'], podcast_priority: 'low' },\n  { url: 'https://rss.libsyn.com/shows/539322/destinations/4646017.xml', podcast_name: 'AI Governance (Enzai)', always_relevant: true, default_topics: ['AI Governance','Policy'], podcast_priority: 'high' },\n  { url: 'https://feeds.simplecast.com/rZ0cYk12', podcast_name: 'Your Undivided Attention', always_relevant: true, default_topics: ['AI Governance','AI Safety'], podcast_priority: 'high' },\n  { url: 'https://feeds.megaphone.fm/CSIS8973369418', podcast_name: 'The AI Policy Podcast', always_relevant: true, default_topics: ['Policy','AI Governance'], podcast_priority: 'high' },\n  { url: 'https://rss.buzzsprout.com/2175779.rss', podcast_name: 'Everyday AI', always_relevant: false, default_topics: ['Marketing AI','AI Strategy'], podcast_priority: 'medium' },\n  { url: 'https://rss.libsyn.com/shows/123267/destinations/727317.xml', podcast_name: 'Eye on AI', always_relevant: false, default_topics: ['Research','Enterprise AI'], podcast_priority: 'medium' },\n];\nreturn feeds.map(f => ({ json: f }));"
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000136",
+        "name": "HTTP: Fetch Raw RSS",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          544,
+          608
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.url }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "User-Agent",
+                "value": "Mozilla/5.0 (content-pipeline/1.0)"
+              },
+              {
+                "name": "Accept",
+                "value": "application/rss+xml, application/xml, text/xml, */*"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 30000,
+            "response": {
+              "response": {
+                "responseFormat": "text"
+              }
+            }
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000137",
+        "name": "Parse + Filter + Enrich",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          800,
+          608
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "const WINDOW_DAYS = 7;\nconst cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;\nconst keywords = [\"ai\",\"artificial intelligence\",\"claude\",\"gpt\",\"anthropic\",\"openai\",\"gemini\",\"agent\",\"llm\",\"machine learning\",\"marketing ai\",\"martech\",\"copilot\",\"automation\",\"mcp\",\"model context protocol\"];\nfunction getTag(tag, block) {\n  const re = new RegExp(\"<\" + tag + \"(?:\\\\s[^>]*)?>([\\\\s\\\\S]*?)<\\\\/\" + tag + \">\", \"i\");\n  const m = block.match(re);\n  if (!m) return \"\";\n  let v = m[1];\n  v = v.replace(/^\\s*<!\\[CDATA\\[/, \"\").replace(/\\]\\]>\\s*$/, \"\");\n  return v.trim();\n}\nfunction getAttr(tag, name, block) {\n  const re = new RegExp(\"<\" + tag + \"[^>]*\\\\b\" + name + \"=\\\"([^\\\"]*)\\\"\", \"i\");\n  const m = block.match(re);\n  return m ? m[1] : \"\";\n}\nfunction pickEpisodeUrl(block) {\n  const link = getTag(\"link\", block);\n  if (link && /^https?:\\/\\//i.test(link)) return link;\n  const atomHref = getAttr(\"atom:link\", \"href\", block);\n  if (atomHref && /^https?:\\/\\//i.test(atomHref)) return atomHref;\n  const gipm = /<guid[^>]*isPermaLink=\\\"true\\\"[^>]*>([\\s\\S]*?)<\\/guid>/i.exec(block);\n  if (gipm) {\n    const v = gipm[1].replace(/^\\s*<!\\[CDATA\\[/, \"\").replace(/\\]\\]>\\s*$/, \"\").trim();\n    if (/^https?:\\/\\//i.test(v)) return v;\n  }\n  const g = getTag(\"guid\", block);\n  if (g && /^https?:\\/\\//i.test(g)) return g;\n  return \"\";\n}\nconst out = [];\nconst httpItems = $input.all();\nfor (let i = 0; i < httpItems.length; i++) {\n  const it = httpItems[i].json;\n  if (it._http_error || it.error) continue;\n  const xml = (typeof it.data === \"string\" ? it.data : (typeof it.body === \"string\" ? it.body : \"\"));\n  if (!xml) continue;\n  const feed = $(\"Feed Config List\").itemMatching(i).json;\n  const itemRe = /<item(?:\\s[^>]*)?>[\\s\\S]*?<\\/item>/gi;\n  let m;\n  while ((m = itemRe.exec(xml)) !== null) {\n    const block = m[0];\n    const pub = getTag(\"pubDate\", block) || getTag(\"dc:date\", block) || getTag(\"published\", block);\n    if (!pub) continue;\n    const t = new Date(pub).getTime();\n    if (isNaN(t) || t < cutoff) continue;\n    const title = getTag(\"title\", block);\n    const episodeUrl = pickEpisodeUrl(block);\n    const enclosureUrl = getAttr(\"enclosure\", \"url\", block);\n    if (!enclosureUrl) continue;\n    const descRaw = getTag(\"description\", block) || getTag(\"content:encoded\", block) || \"\";\n    const descText = descRaw.replace(/<[^>]+>/g, \" \").replace(/\\s+/g, \" \").trim().substring(0, 500);\n    const text = (title + \" \" + descText).toLowerCase();\n    const keywordHit = keywords.some(k => text.includes(k));\n    const isRelevant = feed.always_relevant || keywordHit;\n    if (!isRelevant) continue;\n    out.push({ json: {\n      title,\n      link: episodeUrl,\n      isoDate: new Date(t).toISOString(),\n      pubDate: pub,\n      contentSnippet: descText,\n      audio_url: enclosureUrl,\n      podcast_name: feed.podcast_name,\n      default_topics: feed.default_topics,\n      podcast_priority: feed.podcast_priority\n    }});\n  }\n}\nreturn out;\n"
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify((() => {\n  const title = ($json._podcast_name || \"Source\") + \" — \" + ($json._episode_title || \"Episode\");\n  const transcript = $json.transcript || \"\";\n  const chapters = JSON.parse($json.chapters_json || \"[]\");\n  const chaptersTextForProp = chapters.map(c => (c.headline || \"\") + \": \" + (c.gist || c.summary || \"\")).join(\" | \");\n  const tChunks = [];\n  for (let i = 0; i < transcript.length; i += 1900) tChunks.push(transcript.substring(i, i + 1900));\n  if (!tChunks.length) tChunks.push(\"\");\n  const tBlocks = tChunks.slice(0, 80).map(c => ({ object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: c } }] } }));\n  const chBlocks = chapters.length ? [\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Chapters\" } }] } },\n    ...chapters.map(c => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: ((c.headline || \"\") + \" — \" + (c.gist || c.summary || \"\")).substring(0, 2000) } }] } }))\n  ] : [];\n  return {\n    parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" },\n    properties: {\n      Title: { title: [{ text: { content: title.substring(0, 200) } }] },\n      Type: { select: { name: \"Source\" } },\n      \"Source Type\": { select: { name: $json.source_type === \"vimeo\" ? \"vimeo\" : \"podcast\" } },\n      Episode: { rich_text: [{ type: \"text\", text: { content: (($json._podcast_name || \"\") + \" — \" + ($json._episode_title || \"\")).substring(0, 2000), link: $json._episode_url ? { url: $json._episode_url } : null } }] },\n      Published: { date: { start: (($json._episode_published || \"\").substring(0, 10)) || null } },\n      \"Transcript Source\": { select: { name: $json.transcript_source || \"AssemblyAI\" } },\n      \"Transcript ID\": { rich_text: [{ text: { content: ($json.transcript_id || \"\").substring(0, 2000) } }] },\n      Chapters: { rich_text: [{ text: { content: chaptersTextForProp.substring(0, 2000) } }] },\n      Topics: { multi_select: ($json._default_topics || []).map(t => ({ name: t })) }\n    },\n    children: [\n      ...chBlocks,\n      { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Transcript\" } }] } },\n      ...tBlocks\n    ]\n  };\n})()) }}",
+          "options": {
+            "response": {
+              "response": {
+                "neverError": true
+              }
+            },
+            "timeout": 60000
+          }
+        },
+        "name": "Notion: Create Source Page",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3392,
+          320
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "onError": "continueRegularOutput",
+        "id": "aaaaaaaa-0000-4000-8000-000000000138"
+      },
+      {
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "source_page_id",
+                "type": "string",
+                "value": "={{ $json.id || \"\" }}"
+              },
+              {
+                "id": "2",
+                "name": "transcript",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.transcript }}"
+              },
+              {
+                "id": "3",
+                "name": "transcript_id",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.transcript_id || \"\" }}"
+              },
+              {
+                "id": "4",
+                "name": "transcript_source",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.transcript_source }}"
+              },
+              {
+                "id": "5",
+                "name": "_episode_title",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._episode_title }}"
+              },
+              {
+                "id": "6",
+                "name": "_episode_url",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._episode_url }}"
+              },
+              {
+                "id": "7",
+                "name": "_episode_published",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._episode_published }}"
+              },
+              {
+                "id": "8",
+                "name": "_podcast_name",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._podcast_name }}"
+              },
+              {
+                "id": "9",
+                "name": "_default_topics",
+                "type": "array",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._default_topics }}"
+              },
+              {
+                "id": "10",
+                "name": "_podcast_priority",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json._podcast_priority || \"medium\" }}"
+              },
+              {
+                "id": "11",
+                "name": "source_type",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.source_type || \"podcast\" }}"
+              },
+              {
+                "id": "12",
+                "name": "chapters_json",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.chapters_json || \"[]\" }}"
+              },
+              {
+                "id": "13",
+                "name": "highlights_json",
+                "type": "string",
+                "value": "={{ $(\"Merge Transcripts (RSS + Vimeo)\").item.json.highlights_json || \"[]\" }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "Carry Source Page ID",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          3616,
+          320
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000139"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "return [{ json: {\n  url: 'https://natesnote.substack.com/feed',\n  podcast_name: \"Nate's Notebook\",\n  always_relevant: true,\n  default_topics: ['AI Strategy', 'Claude', 'Anthropic'],\n  podcast_priority: 'high'\n} }];"
+        },
+        "name": "Nate's Notebook Config",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          288,
+          848
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000140"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.firecrawl.dev/v1/scrape",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ url: $json.url, formats: [\"rawHtml\"], timeout: 30000 }) }}",
+          "options": {
+            "timeout": 45000
+          }
+        },
+        "name": "Firecrawl: Fetch Nate RSS",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          528,
+          848
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "AiR3xnA54BebUcEp",
+            "name": "Firecrawl API"
+          }
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000141"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "\nconst WINDOW_DAYS = 7;\nconst cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;\nconst item = $input.first().json;\nconst xml = (item.data && item.data.rawHtml) ? item.data.rawHtml : '';\nif (!xml) return [];\nfunction getTag(tag, block) {\n  const re = new RegExp('<' + tag + '(?:\\\\s[^>]*)?>([\\\\s\\\\S]*?)<\\\\/' + tag + '>', 'i');\n  const m = block.match(re);\n  if (!m) return '';\n  return m[1].replace(/^\\s*<!\\[CDATA\\[/, '').replace(/\\]\\]>\\s*$/, '').trim();\n}\nfunction getAttr(tag, name, block) {\n  const re = new RegExp('<' + tag + '[^>]*\\\\b' + name + '=\"([^\"]*)\"', 'i');\n  const m = block.match(re);\n  return m ? m[1] : '';\n}\nfunction pickUrl(block) {\n  const link = getTag('link', block);\n  if (link && /^https?:\\/\\//i.test(link)) return link;\n  const gpm = /<guid[^>]*isPermaLink=\"true\"[^>]*>([\\s\\S]*?)<\\/guid>/i.exec(block);\n  if (gpm) {\n    const v = gpm[1].replace(/^\\s*<!\\[CDATA\\[/, '').replace(/\\]\\]>\\s*$/, '').trim();\n    if (/^https?:\\/\\//i.test(v)) return v;\n  }\n  const g = getTag('guid', block);\n  if (g && /^https?:\\/\\//i.test(g)) return g;\n  return '';\n}\nconst out = [];\nconst itemRe = /<item(?:\\s[^>]*)?>[\\s\\S]*?<\\/item>/gi;\nlet m;\nwhile ((m = itemRe.exec(xml)) !== null) {\n  const block = m[0];\n  const pub = getTag('pubDate', block) || getTag('dc:date', block);\n  if (!pub) continue;\n  const t = new Date(pub).getTime();\n  if (isNaN(t) || t < cutoff) continue;\n  const title = getTag('title', block);\n  const episodeUrl = pickUrl(block);\n  const enclosureUrl = getAttr('enclosure', 'url', block);\n  if (!enclosureUrl) continue;\n  const descRaw = getTag('description', block) || '';\n  const descText = descRaw.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').trim().substring(0, 500);\n  out.push({ json: {\n    title, link: episodeUrl,\n    isoDate: new Date(t).toISOString(), pubDate: pub,\n    contentSnippet: descText, audio_url: enclosureUrl,\n    podcast_name: \"Nate's Notebook\",\n    default_topics: ['AI Strategy', 'Claude', 'Anthropic'],\n    podcast_priority: 'high'\n  }});\n}\nreturn out;\n"
+        },
+        "name": "Nate's Notebook: Parse RSS",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          768,
+          848
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000142"
+      },
+      {
+        "parameters": {
+          "mode": "append"
+        },
+        "name": "Merge: All RSS Episodes",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [
+          1040,
+          608
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000143"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "language": "javaScript",
+          "jsCode": "\nconst j = $json;\nconst safe = s => (s || '').replace(/[\\/\\\\:*?\"<>|]/g, '_').substring(0, 80);\nconst filename = safe(j.podcast_name) + ' — ' + safe(j.episode_title) + '.md';\n\nconst lines = [\n  '# ' + (j.episode_title || '(untitled)'),\n  '',\n  '**Podcast:** ' + (j.podcast_name || ''),\n  '**Date:** ' + (j.isoDate || ''),\n];\nif (j.episode_url) lines.push('**Episode:** ' + j.episode_url);\nif (j.transcript_id) lines.push('**Transcript ID:** ' + j.transcript_id);\nlines.push('', '---', '');\n\nif (j.chapters_json) {\n  try {\n    const chapters = JSON.parse(j.chapters_json);\n    if (chapters.length) {\n      lines.push('## Chapters', '');\n      for (const ch of chapters) {\n        const ts = Math.floor((ch.start || 0) / 1000);\n        const mm = String(Math.floor(ts / 60)).padStart(2, '0');\n        const ss = String(ts % 60).padStart(2, '0');\n        lines.push('- **' + mm + ':' + ss + '** — ' + (ch.headline || ch.gist || ''));\n      }\n      lines.push('');\n    }\n  } catch(e) {}\n}\n\nlines.push('## Transcript', '', j.transcript || '(no transcript)');\n\nconst content = lines.join('\\n');\nconst b64 = Buffer.from(content, 'utf8').toString('base64');\n\nreturn {\n  json: { ...j, _gdrive_filename: filename },\n  binary: {\n    transcript: {\n      data: b64,\n      mimeType: 'text/markdown',\n      fileName: filename,\n      fileExtension: 'md'\n    }\n  }\n};\n"
+        },
+        "name": "Google Drive: Prep Transcript",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3632,
+          440
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000144"
+      },
+      {
+        "parameters": {
+          "operation": "upload",
+          "name": "={{ $json._gdrive_filename }}",
+          "driveId": {
+            "__rl": true,
+            "value": "My Drive",
+            "mode": "list",
+            "cachedResultName": "My Drive"
+          },
+          "folderId": {
+            "__rl": true,
+            "value": "REPLACE_WITH_GDRIVE_FOLDER_ID",
+            "mode": "id"
+          },
+          "binaryPropertyName": "transcript",
+          "options": {}
+        },
+        "name": "Google Drive: Write Transcript",
+        "type": "n8n-nodes-base.googleDrive",
+        "typeVersion": 3,
+        "position": [
+          3872,
+          440
+        ],
+        "credentials": {
+          "googleDriveOAuth2Api": {
+            "id": "zpamjtQMC4RRrZmt",
+            "name": "Google Drive - Alec"
+          }
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000145"
+      }
+    ],
+    "connections": {
+      "Tue + Fri 10am PT": {
+        "main": [
+          [
+            {
+              "node": "Feed Config List",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Nate's Notebook Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Dedup by URL": {
+        "main": [
+          [
+            {
+              "node": "Preserve Episode Metadata",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Relevance Gate": {
+        "main": [
+          [
+            {
+              "node": "Preserve Episode Metadata",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Preserve Episode Metadata": {
+        "main": [
+          [
+            {
+              "node": "AssemblyAI: Submit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AssemblyAI: Submit": {
+        "main": [
+          [
+            {
+              "node": "AssemblyAI: Wait 30s",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AssemblyAI: Wait 30s": {
+        "main": [
+          [
+            {
+              "node": "AssemblyAI: Poll",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AssemblyAI: Poll": {
+        "main": [
+          [
+            {
+              "node": "AssemblyAI: Completed?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AssemblyAI: Completed?": {
+        "main": [
+          [
+            {
+              "node": "AssemblyAI: Extract Transcript",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "AssemblyAI: Wait 30s",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AssemblyAI: Extract Transcript": {
+        "main": [
+          [
+            {
+              "node": "Merge Transcripts (RSS + Vimeo)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Transcripts (RSS + Vimeo)": {
+        "main": [
+          [
+            {
+              "node": "Notion: Create Source Page",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo: List Recent Videos": {
+        "main": [
+          [
+            {
+              "node": "Vimeo: Filter Public + Dedup",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo: Filter Public + Dedup": {
+        "main": [
+          [
+            {
+              "node": "Vimeo: Preserve Metadata",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo: Preserve Metadata": {
+        "main": [
+          [
+            {
+              "node": "Vimeo: Get Text Tracks",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo: Get Text Tracks": {
+        "main": [
+          [
+            {
+              "node": "Vimeo Has Caption?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo Has Caption?": {
+        "main": [
+          [
+            {
+              "node": "Vimeo: Fetch Caption VTT",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Vimeo: Get Download URL",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo: Fetch Caption VTT": {
+        "main": [
+          [
+            {
+              "node": "Vimeo: Parse VTT to Text",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo: Parse VTT to Text": {
+        "main": [
+          []
+        ]
+      },
+      "Vimeo: Get Download URL": {
+        "main": [
+          [
+            {
+              "node": "Vimeo: Set Audio URL",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo: Set Audio URL": {
+        "main": [
+          [
+            {
+              "node": "Vimeo AssemblyAI: Submit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo AssemblyAI: Submit": {
+        "main": [
+          [
+            {
+              "node": "Vimeo AssemblyAI: Wait 30s",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo AssemblyAI: Wait 30s": {
+        "main": [
+          [
+            {
+              "node": "Vimeo AssemblyAI: Poll",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo AssemblyAI: Poll": {
+        "main": [
+          [
+            {
+              "node": "Vimeo AssemblyAI: Completed?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo AssemblyAI: Completed?": {
+        "main": [
+          [
+            {
+              "node": "Vimeo AssemblyAI: Extract Transcript",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Vimeo AssemblyAI: Wait 30s",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Vimeo AssemblyAI: Extract Transcript": {
+        "main": [
+          []
+        ]
+      },
+      "Attach Episode Context": {
+        "main": [
+          [
+            {
+              "node": "Claude Extract Ideas",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Extract Ideas": {
+        "main": [
+          [
+            {
+              "node": "Tag: Claude Sonnet 4.6",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tag: Claude Sonnet 4.6": {
+        "main": [
+          [
+            {
+              "node": "Parse Ideas + Split",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Ideas + Split": {
+        "main": [
+          [
+            {
+              "node": "Notion: Create Idea Page",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Feed Config List": {
+        "main": [
+          [
+            {
+              "node": "HTTP: Fetch Raw RSS",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP: Fetch Raw RSS": {
+        "main": [
+          [
+            {
+              "node": "Parse + Filter + Enrich",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse + Filter + Enrich": {
+        "main": [
+          [
+            {
+              "node": "Merge: All RSS Episodes",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notion: Create Source Page": {
+        "main": [
+          [
+            {
+              "node": "Carry Source Page ID",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Google Drive: Prep Transcript",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Carry Source Page ID": {
+        "main": [
+          [
+            {
+              "node": "Attach Episode Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Nate's Notebook Config": {
+        "main": [
+          [
+            {
+              "node": "Firecrawl: Fetch Nate RSS",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Firecrawl: Fetch Nate RSS": {
+        "main": [
+          [
+            {
+              "node": "Nate's Notebook: Parse RSS",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Nate's Notebook: Parse RSS": {
+        "main": [
+          [
+            {
+              "node": "Merge: All RSS Episodes",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Merge: All RSS Episodes": {
+        "main": [
+          [
+            {
+              "node": "Dedup by URL",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Google Drive: Prep Transcript": {
+        "main": [
+          [
+            {
+              "node": "Google Drive: Write Transcript",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Alec Foster",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-05-09T00:11:32.916Z",
+        "id": 198,
+        "workflowId": "oipwSYyOYDCFPz8N",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000103",
+        "event": "activated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      },
+      {
+        "createdAt": "2026-05-09T00:11:32.820Z",
+        "id": 197,
+        "workflowId": "oipwSYyOYDCFPz8N",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000103",
+        "event": "deactivated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      }
+    ]
+  }
+}

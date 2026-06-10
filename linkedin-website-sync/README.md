@@ -1,20 +1,20 @@
-# Podcast RSS + Vimeo Intake
+# LinkedIn → Website Sync
 
-Twice-weekly cron: pulls podcast RSS (+ Vimeo) → transcribes → extracts topic ideas with an LLM → writes to Notion.
+Weekly cron that syncs recent LinkedIn posts to a JSON file consumed by a personal website.
 
 Part of a personal content pipeline by [Alec Foster](https://www.alecfoster.com). Importable as a single n8n workflow JSON.
 
 ## What it does
 
-Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a transcription service, polls for completion with a Wait node, extracts topic ideas with an LLM, stores transcripts in Google Drive, and writes ideas to Notion.
+The bridge between LinkedIn activity and a personal site's activity feed. Pulls recent posts and writes them to a JSON artifact the website reads at build/runtime. This is the workflow behind the activity feed on alecfoster.com.
 
 ## At a glance
 
 | | |
 |---|---|
 | Trigger | Schedule (cron) |
-| Schedule | Tue & Fri, 10:00 |
-| Nodes | 40 |
+| Schedule | Weekly, Sun 06:00 |
+| Nodes | 5 |
 | Destination | Notion content database |
 
 ## Quick start
@@ -28,8 +28,7 @@ Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a trans
 
 | Service | n8n credential type | Notes |
 |---|---|---|
-| Google Drive | `googleDriveOAuth2Api` | OAuth2 for transcript storage |
-| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for the transcription API and the LLM |
+| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for your scraper API and the destination (e.g. a GitHub commit endpoint or webhook) |
 
 Don't paste secrets into the JSON. n8n's credential store is encrypted; the JSON only references credential IDs.
 

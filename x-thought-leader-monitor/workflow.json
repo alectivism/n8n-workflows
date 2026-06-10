@@ -1,0 +1,940 @@
+{
+  "name": "Content Pipeline: X Thought Leader Monitor",
+  "description": "Fri 11am PT. Apify (kaitoeasyapi native fields: from/since/until) → filter mocks/RTs/replies → Notion dedup → Claude → Notion Idea pages.",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 11 * * 5"
+            }
+          ]
+        }
+      },
+      "name": "Fri 11am PT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// X (Twitter) thought leaders. Pulled 14-day window each Fri 11am PT.\n// max_items: items to request from Apify per handle. Apify dedups against Notion downstream.\n// tier drives Claude relevance threshold.\nreturn [\n  // Tier S: highest analytical signal density (eval 2026-04-26)\n  { json: { handle: 'random_walker',  display_name: 'Arvind Narayanan',  max_items: 60, tier: 'high' } },\n  { json: { handle: 'hardmaru',        display_name: 'David Ha',           max_items: 60, tier: 'high' } },\n  { json: { handle: 'sarahookr',       display_name: 'Sara Hooker',        max_items: 60, tier: 'high' } },\n  { json: { handle: 'simonw',          display_name: 'Simon Willison',     max_items: 60, tier: 'high' } },\n  { json: { handle: 'rasbt',           display_name: 'Sebastian Raschka',  max_items: 60, tier: 'high' } },\n  // Tier A: secondary include\n  { json: { handle: 'swyx',            display_name: 'Shawn Wang',         max_items: 40, tier: 'medium' } },\n  { json: { handle: 'goodside',        display_name: 'Riley Goodside',     max_items: 40, tier: 'medium' } },\n  { json: { handle: 'virattt',         display_name: 'Virat',              max_items: 40, tier: 'medium' } },\n  { json: { handle: 'jeremyphoward',   display_name: 'Jeremy Howard',      max_items: 30, tier: 'medium' } },\n  { json: { handle: 'DrJimFan',        display_name: 'Jim Fan',            max_items: 30, tier: 'medium' } },\n  { json: { handle: 'sayashk',         display_name: 'Sayash Kapoor',      max_items: 30, tier: 'medium' } },\n];"
+      },
+      "name": "Handle Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/kaitoeasyapi~twitter-x-data-tweet-scraper-pay-per-result-cheapest/run-sync-get-dataset-items",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ from: $json.handle, since: $now.minus({ days: 14 }).toFormat(\"yyyy-MM-dd\"), until: $now.toFormat(\"yyyy-MM-dd\"), maxItems: $json.max_items, lang: \"en\", queryType: \"Latest\" }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "name": "Apify: Fetch Tweets",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        688,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Apify API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// kaitoeasyapi returns one item per tweet. Filter mock placeholders + retweets + replies. Field shape: snake_case nested (retweeted_tweet, quoted_tweet).\nconst TIER_BY_HANDLE = {\n  'random_walker': 'high',\n  'hardmaru': 'high',\n  'sarahookr': 'high',\n  'simonw': 'high',\n  'rasbt': 'high',\n  'swyx': 'medium',\n  'goodside': 'medium',\n  'virattt': 'medium',\n  'jeremyphoward': 'medium',\n  'drjimfan': 'medium',\n  'sayashk': 'medium',\n};\nconst HIGH_VOLUME = new Set(['simonw', 'rasbt', 'swyx', 'sarahookr', 'virattt']);\nconst WINDOW_DAYS = 14;\nconst cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;\nconst items = $input.all();\nconst out = [];\nfor (const item of items) {\n  const t = item.json;\n  // Mock-tweet billing-floor filler: kaitoeasyapi returns these when query yields no real results\n  if (t.type === 'mock_tweet' || t.id === -1 || t.id === '-1') continue;\n  if (t.type && t.type !== 'tweet') continue;\n  // Retweets nest as retweeted_tweet payload on this actor (no isRetweet boolean)\n  if (t.retweeted_tweet) continue;\n  if (t.isReply === true) continue;\n  const text = (t.text || t.fullText || '').trim();\n  if (!text) continue;\n  const minLen = t.isQuote === true ? 30 : 80;\n  if (text.length < minLen) continue;\n  const raw = t.createdAt || t.created_at || '';\n  const ts = raw ? new Date(raw).getTime() : 0;\n  if (!ts || isNaN(ts) || ts < cutoff) continue;\n  const author = t.author || {};\n  const handle = String(author.userName || author.screen_name || author.username || '').toLowerCase();\n  const likes = Number(t.likeCount || t.favoriteCount || 0);\n  const replies = Number(t.replyCount || 0);\n  const retweets = Number(t.retweetCount || 0);\n  if (HIGH_VOLUME.has(handle)) {\n    const engagement = likes + replies * 3;\n    if (engagement < 30) continue;\n  }\n  const id = String(t.id || t.tweetId || t.id_str || '');\n  let url = t.url || t.twitterUrl || '';\n  if (!url && id && handle) url = 'https://x.com/' + handle + '/status/' + id;\n  if (!url) continue;\n  out.push({ json: {\n    tweet_id: id,\n    url: url,\n    text: text.substring(0, 8000),\n    is_quote: t.isQuote === true,\n    quoted_text: (t.quoted_tweet && t.quoted_tweet.text) ? String(t.quoted_tweet.text).substring(0, 2000) : '',\n    author_handle: handle,\n    author_name: author.name || author.fullName || handle,\n    posted_at: new Date(ts).toISOString(),\n    likes: likes,\n    replies: replies,\n    retweets: retweets,\n    views: Number(t.viewCount || 0),\n    tier: TIER_BY_HANDLE[handle] || 'medium',\n  }});\n}\nreturn out;"
+      },
+      "name": "Parse + Filter Tweets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/aaaaaaaa-0000-4000-8000-000000000001/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"filter\": {\"and\": [{\"property\": \"Type\", \"select\": {\"equals\": \"Source\"}}, {\"property\": \"Source Type\", \"select\": {\"equals\": \"x\"}}]}, \"sorts\": [{\"property\": \"Collected At\", \"direction\": \"descending\"}], \"page_size\": 100}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Notion: Query Existing X",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const tweets = $('Parse + Filter Tweets').all().map(it => it.json);\nconst existing = $input.all();\nconst existingIds = new Set();\nconst existingUrls = new Set();\nfor (const e of existing) {\n  const results = (e.json.results) || [];\n  for (const page of results) {\n    const ep = (page.properties && page.properties.Episode && page.properties.Episode.rich_text) || [];\n    for (const seg of ep) {\n      const u = (seg.text && seg.text.link && seg.text.link.url) || '';\n      if (u) existingUrls.add(u);\n    }\n    const cmt = (page.properties && page.properties.Comment && page.properties.Comment.rich_text) || [];\n    for (const seg of cmt) {\n      const c = (seg.text && seg.text.content) || '';\n      const idMatch = c.match(/tweet_id: (\\d+)/);\n      if (idMatch) existingIds.add(idMatch[1]);\n    }\n  }\n}\nconst newTweets = tweets.filter(p => !existingUrls.has(p.url) && !existingIds.has(p.tweet_id));\nreturn newTweets.map(p => ({ json: p }));"
+      },
+      "name": "Dedup: New Tweets Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const title = j.author_name + \" — X: \" + j.text.substring(0, 60).replace(/\\s+/g, \" \").trim();\n  const tChunks = [];\n  const fullText = j.is_quote && j.quoted_text ? (j.text + \"\\n\\n— quoting —\\n\" + j.quoted_text) : j.text;\n  for (let i = 0; i < fullText.length; i += 1900) tChunks.push(fullText.substring(i, i + 1900));\n  if (!tChunks.length) tChunks.push(\"\");\n  const tBlocks = tChunks.map(c => ({ object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: c } }] } }));\n  return {\n    parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" },\n    properties: {\n      Title: { title: [{ text: { content: title.substring(0, 200) } }] },\n      Type: { select: { name: \"Source\" } },\n      \"Source Type\": { select: { name: \"x\" } },\n      Episode: { rich_text: [{ type: \"text\", text: { content: (\"X — @\" + j.author_handle).substring(0, 2000), link: j.url ? { url: j.url } : null } }] },\n      Published: { date: { start: (j.posted_at || \"\").substring(0, 10) || null } },\n      Comment: { rich_text: [{ text: { content: (\"tweet_id: \" + j.tweet_id + \" | likes: \" + j.likes + \" | replies: \" + j.replies + \" | retweets: \" + j.retweets + \" | views: \" + j.views).substring(0, 2000) } }] }\n    },\n    children: [\n      { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tweet Content\" } }] } },\n      ...tBlocks.slice(0, 80)\n    ]\n  };\n})()) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Notion: Create X Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "source_page_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "id": "2",
+              "name": "_tweet_url",
+              "type": "string",
+              "value": "={{ $('Dedup: New Tweets Only').item.json.url }}"
+            },
+            {
+              "id": "3",
+              "name": "_tweet_text",
+              "type": "string",
+              "value": "={{ $('Dedup: New Tweets Only').item.json.text }}"
+            },
+            {
+              "id": "4",
+              "name": "_quoted_text",
+              "type": "string",
+              "value": "={{ $('Dedup: New Tweets Only').item.json.quoted_text }}"
+            },
+            {
+              "id": "5",
+              "name": "_author_name",
+              "type": "string",
+              "value": "={{ $('Dedup: New Tweets Only').item.json.author_name }}"
+            },
+            {
+              "id": "6",
+              "name": "_author_handle",
+              "type": "string",
+              "value": "={{ $('Dedup: New Tweets Only').item.json.author_handle }}"
+            },
+            {
+              "id": "7",
+              "name": "_posted_at",
+              "type": "string",
+              "value": "={{ $('Dedup: New Tweets Only').item.json.posted_at }}"
+            },
+            {
+              "id": "8",
+              "name": "_tweet_id",
+              "type": "string",
+              "value": "={{ $('Dedup: New Tweets Only').item.json.tweet_id }}"
+            },
+            {
+              "id": "9",
+              "name": "_tier",
+              "type": "string",
+              "value": "={{ $('Dedup: New Tweets Only').item.json.tier || 'high' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Carry Source Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1792,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-6\", max_tokens: 6000, system: [{ type: \"text\", text: \"You extract content ideas from X (Twitter) posts for Alec Foster. Alec is Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Audience for Alec's LinkedIn: marketers, AI practitioners, execs/CMOs, governance folks, builders. Alec's interests (use to score Relevance): Claude (all Anthropic products), Claude Code, agentic AI, AI governance, responsible AI, AI safety, AI ethics, privacy, marketing AI, advertising personalization, adtech, measurement, enterprise AI, MCP, prompt engineering, LLM evals, AI strategy for CMOs, MMA frameworks (ALTT, ACE, CAP, AURA, RAIL, ARC, SIFT), Codex. Tweets are short. Most won't yield ideas. Return ideas: [] for jokes, vibes, brief reactions, memes, self-promo, or off-topic. Yield 1 idea ONLY when the tweet has a substantive analytical claim, framework, paper drop, eval result, or technical observation Alec could amplify, counter, or build on. Be aggressive about filtering filler.\", cache_control: { type: \"ephemeral\" } }], messages: [{ role: \"user\", content: \"Extract a content idea from this X post.\\n\\nAuthor: \" + ($json._author_name || \"\") + \" (@\" + ($json._author_handle || \"\") + \")\\nPosted: \" + ($json._posted_at || \"\") + \"\\nURL: \" + ($json._tweet_url || \"\") + \"\\n\\nTWEET:\\n\" + ($json._tweet_text || \"\") + ($json._quoted_text ? (\"\\n\\nQUOTED TWEET:\\n\" + $json._quoted_text) : \"\") + \"\\n\\nFor the idea (return [] if not substantive enough):\\n- topic_headline: punchy, specific (3-8 words)\\n- hook: 1-2 sentences setting Alec's angle\\n- key_points: 3-5 bullets (>=15 words each, with specifics)\\n- observations: 1-3 bullets of nuance\\n- tips: 0-3 actionable takeaways\\n- quotes: 1 verbatim tweet excerpt (>=10 words, attribute to author)\\n- topics: from {Claude, Agents, AI Governance, Marketing AI, Measurement, AI Strategy, LLMs, MCP, Voice AI, AI Safety, Enterprise AI, Creator Economy, Policy, Research, Content, Prompt Engineering, Reddit/Search, OpenAI, Anthropic, Google, Meta, Codex}\\n- audience: subset of {Marketers, Execs/CMOs, Practitioners, Governance, Builders}\\n- hot_take_potential: High|Medium|Low\\n- utility: High|Medium|Low\\n- relevance: High|Medium|Low\\n- format: Hot Take|Explainer|How-To|Framework|Announcement|Case Study\\n- draft_angle: 1 line on Alec's take\\n- why_it_matters: 1 sentence MMA context\\n- further_reading: any URLs/citations\\n\\nBanned words: Unlock, Unleash, Synergy, Uncover, Furthermore, Leverage, Landscape, Delve, Prowess, Realm, Unearth, Tapestry, Crucial, Pivotal, Revolutionary, Lifeblood, Treasure trove, Dive into, Game-changing, Cutting edge, Empower.\\nNo em-dashes. Use commas, colons, periods, parentheses.\\n\\nOutput strict JSON: {\\\"ideas\\\": [...]} or {\\\"ideas\\\": []}.\" }] }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "name": "Claude Extract X Ideas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2000,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const TOPIC_ALIASES = {\n  \"google gemini\": \"Google\", \"gemini\": \"Google\", \"google\": \"Google\",\n  \"chatgpt\": \"OpenAI\", \"gpt-5\": \"OpenAI\", \"gpt-4\": \"OpenAI\", \"openai\": \"OpenAI\",\n  \"anthropic\": \"Anthropic\", \"claude sonnet\": \"Claude\", \"claude opus\": \"Claude\", \"claude haiku\": \"Claude\", \"claude\": \"Claude\",\n  \"meta ai\": \"Meta\", \"llama\": \"Meta\", \"meta\": \"Meta\",\n  \"agent\": \"Agents\", \"agents\": \"Agents\", \"agentic\": \"Agents\", \"agentic ai\": \"Agents\", \"ai agent\": \"Agents\",\n  \"governance\": \"AI Governance\", \"ai governance\": \"AI Governance\", \"responsible ai\": \"AI Governance\", \"ethics\": \"AI Governance\", \"ai ethics\": \"AI Governance\",\n  \"safety\": \"AI Safety\", \"ai safety\": \"AI Safety\", \"alignment\": \"AI Safety\",\n  \"policy\": \"Policy\", \"regulation\": \"Policy\", \"regulatory\": \"Policy\", \"eu ai act\": \"Policy\",\n  \"marketing\": \"Marketing AI\", \"marketing ai\": \"Marketing AI\", \"advertising\": \"Marketing AI\", \"adtech\": \"Marketing AI\", \"personalization\": \"Marketing AI\",\n  \"measurement\": \"Measurement\", \"attribution\": \"Measurement\", \"analytics\": \"Measurement\",\n  \"strategy\": \"AI Strategy\", \"ai strategy\": \"AI Strategy\", \"enterprise strategy\": \"AI Strategy\",\n  \"llm\": \"LLMs\", \"llms\": \"LLMs\", \"large language model\": \"LLMs\", \"foundation model\": \"LLMs\",\n  \"mcp\": \"MCP\", \"model context protocol\": \"MCP\",\n  \"voice\": \"Voice AI\", \"voice ai\": \"Voice AI\", \"tts\": \"Voice AI\", \"stt\": \"Voice AI\",\n  \"enterprise\": \"Enterprise AI\", \"enterprise ai\": \"Enterprise AI\", \"b2b ai\": \"Enterprise AI\",\n  \"creator\": \"Creator Economy\", \"creator economy\": \"Creator Economy\",\n  \"research\": \"Research\", \"paper\": \"Research\", \"arxiv\": \"Research\",\n  \"content\": \"Content\",\n  \"prompt\": \"Prompt Engineering\", \"prompt engineering\": \"Prompt Engineering\", \"prompting\": \"Prompt Engineering\",\n  \"search\": \"Reddit/Search\", \"reddit\": \"Reddit/Search\", \"perplexity\": \"Reddit/Search\",\n  \"codex\": \"Codex\", \"openai codex\": \"Codex\", \"codex cli\": \"Codex\"\n};\nconst VALID_TOPICS = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nfunction normalize(topic) {\n  const k = String(topic || \"\").trim().toLowerCase();\n  if (TOPIC_ALIASES[k]) return TOPIC_ALIASES[k];\n  for (const [alias, target] of Object.entries(TOPIC_ALIASES)) {\n    if (k.includes(alias)) return target;\n  }\n  return null;\n}\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  let text = '';\n  if (j.content && Array.isArray(j.content) && j.content[0]) text = j.content[0].text || '';\n  else if (typeof j.body === 'string') text = j.body;\n  else text = JSON.stringify(j);\n  text = text.replace(/^```json\\s*/i, '').replace(/```\\s*$/, '').trim();\n  let parsed;\n  try { parsed = JSON.parse(text); } catch (e) { continue; }\n  const ideas = (parsed.ideas) || [];\n  for (const idea of ideas) {\n    const merged = new Set();\n    for (const t of (idea.topics || [])) {\n      const n = normalize(t);\n      if (n && VALID_TOPICS.has(n)) merged.add(n);\n    }\n    if (!merged.size) merged.add('AI Strategy');\n    if (String(idea.relevance || '').toLowerCase() === 'low' && String(idea.utility || '').toLowerCase() === 'low') continue;\n    out.push({ json: {\n      topic_headline: idea.topic_headline || '',\n      hook: idea.hook || '',\n      key_points: idea.key_points || [],\n      observations: idea.observations || [],\n      tips: idea.tips || [],\n      quotes: idea.quotes || [],\n      audience: idea.audience || [],\n      hot_take_potential: idea.hot_take_potential || 'Medium',\n      utility: idea.utility || 'Medium',\n      relevance: idea.relevance || 'Medium',\n      format: idea.format || 'Explainer',\n      draft_angle: idea.draft_angle || '',\n      why_it_matters: idea.why_it_matters || '',\n      further_reading: idea.further_reading || [],\n      merged_topics: Array.from(merged),\n      podcast_name: 'X — @' + (($(\"Carry Source Context\").item.json._author_handle) || ''),\n      episode_title: 'Tweet by ' + (($(\"Carry Source Context\").item.json._author_name) || ''),\n      episode_url: ($(\"Carry Source Context\").item.json._tweet_url) || '',\n      episode_published: ($(\"Carry Source Context\").item.json._posted_at) || '',\n      source_page_id: ($(\"Carry Source Context\").item.json.source_page_id) || '',\n      source_type: 'x',\n      transcript_id: ($(\"Carry Source Context\").item.json._tweet_id) || '',\n      transcript_source: 'X',\n      extraction_model: 'Sonnet 4.6',\n    } });\n  }\n}\nreturn out;"
+      },
+      "name": "Parse Ideas + Split",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const props = {\n    Title: { title: [{ text: { content: (j.topic_headline || \"Untitled\").substring(0, 200) } }] },\n    Type: { select: { name: \"Idea\" } },\n    \"Source Type\": { select: { name: \"x\" } },\n    Episode: { rich_text: [{ type: \"text\", text: { content: (j.episode_title || \"\").substring(0, 2000), link: j.episode_url ? { url: j.episode_url } : null } }] },\n    Published: { date: { start: (j.episode_published || \"\").substring(0, 10) || null } },\n    \"Hot Take Potential\": { select: { name: j.hot_take_potential || \"Medium\" } },\n    Utility: { select: { name: j.utility || \"Medium\" } },\n    Relevance: { select: { name: j.relevance || \"Medium\" } },\n    Format: { select: { name: j.format || \"Explainer\" } },\n    Topics: { multi_select: (j.merged_topics || []).map(t => ({ name: t })) },\n    Audience: { multi_select: (j.audience || []).map(a => ({ name: a })) },\n    Summary: { rich_text: [{ text: { content: (j.hook || \"\").substring(0, 2000) } }] },\n    \"Extraction Model\": { select: { name: \"Sonnet 4.6\" } },\n    \"Transcript Source\": { select: { name: \"X\" } },\n    \"Transcript ID\": { rich_text: [{ text: { content: (j.transcript_id || \"\").substring(0, 2000) } }] },\n    \"Episode Source\": j.source_page_id ? { relation: [{ id: j.source_page_id }] } : { relation: [] }\n  };\n  const children = [\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Hook\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.hook || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Draft Angle\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.draft_angle || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Key Points\" } }] } },\n    ...(j.key_points || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Observations\" } }] } },\n    ...(j.observations || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tips\" } }] } },\n    ...(j.tips || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Quotes\" } }] } },\n    ...(j.quotes || []).map(q => ({ object: \"block\", type: \"quote\", quote: { rich_text: [{ type: \"text\", text: { content: (\"\\\"\" + (q.quote || q.text || \"\") + \"\\\" — \" + (q.speaker || \"\")).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Why It Matters\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.why_it_matters || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Further Reading\" } }] } },\n    ...(j.further_reading || []).map(r => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(r).substring(0, 2000) } }] } }))\n  ];\n  return { parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" }, properties: props, children };\n})()) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Notion: Create Idea Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2448,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Fri 11am PT": {
+      "main": [
+        [
+          {
+            "node": "Handle Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Config": {
+      "main": [
+        [
+          {
+            "node": "Apify: Fetch Tweets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify: Fetch Tweets": {
+      "main": [
+        [
+          {
+            "node": "Parse + Filter Tweets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Filter Tweets": {
+      "main": [
+        [
+          {
+            "node": "Notion: Query Existing X",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Query Existing X": {
+      "main": [
+        [
+          {
+            "node": "Dedup: New Tweets Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup: New Tweets Only": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create X Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Create X Source": {
+      "main": [
+        [
+          {
+            "node": "Carry Source Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carry Source Context": {
+      "main": [
+        [
+          {
+            "node": "Claude Extract X Ideas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Extract X Ideas": {
+      "main": [
+        [
+          {
+            "node": "Parse Ideas + Split",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Ideas + Split": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create Idea Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "HrwcI5OK2E2EZ8PV",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodeGroups": [],
+  "activeVersionId": "aaaaaaaa-0000-4000-8000-000000000002",
+  "versionCounter": 24,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-04-26T21:07:40.000Z",
+    "createdAt": "2026-04-26T21:07:37.611Z",
+    "versionId": "aaaaaaaa-0000-4000-8000-000000000002",
+    "workflowId": "6eIPF22pm43oxEjW",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 0 11 * * 5"
+              }
+            ]
+          }
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000003",
+        "name": "Fri 11am PT",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          240,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// X (Twitter) thought leaders. Pulled 14-day window each Fri 11am PT.\n// max_items: items to request from Apify per handle. Apify dedups against Notion downstream.\n// tier drives Claude relevance threshold.\nreturn [\n  // Tier S: highest analytical signal density (eval 2026-04-26)\n  { json: { handle: 'random_walker',  display_name: 'Arvind Narayanan',  max_items: 60, tier: 'high' } },\n  { json: { handle: 'hardmaru',        display_name: 'David Ha',           max_items: 60, tier: 'high' } },\n  { json: { handle: 'sarahookr',       display_name: 'Sara Hooker',        max_items: 60, tier: 'high' } },\n  { json: { handle: 'simonw',          display_name: 'Simon Willison',     max_items: 60, tier: 'high' } },\n  { json: { handle: 'rasbt',           display_name: 'Sebastian Raschka',  max_items: 60, tier: 'high' } },\n  // Tier A: secondary include\n  { json: { handle: 'swyx',            display_name: 'Shawn Wang',         max_items: 40, tier: 'medium' } },\n  { json: { handle: 'goodside',        display_name: 'Riley Goodside',     max_items: 40, tier: 'medium' } },\n  { json: { handle: 'virattt',         display_name: 'Virat',              max_items: 40, tier: 'medium' } },\n  { json: { handle: 'jeremyphoward',   display_name: 'Jeremy Howard',      max_items: 30, tier: 'medium' } },\n  { json: { handle: 'DrJimFan',        display_name: 'Jim Fan',            max_items: 30, tier: 'medium' } },\n  { json: { handle: 'sayashk',         display_name: 'Sayash Kapoor',      max_items: 30, tier: 'medium' } },\n];"
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000004",
+        "name": "Handle Config",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          464,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.apify.com/v2/acts/kaitoeasyapi~twitter-x-data-tweet-scraper-pay-per-result-cheapest/run-sync-get-dataset-items",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ from: $json.handle, since: $now.minus({ days: 14 }).toFormat(\"yyyy-MM-dd\"), until: $now.toFormat(\"yyyy-MM-dd\"), maxItems: $json.max_items, lang: \"en\", queryType: \"Latest\" }) }}",
+          "options": {
+            "timeout": 180000
+          }
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000005",
+        "name": "Apify: Fetch Tweets",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          688,
+          304
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "pW4TITjTSI7A6ay7",
+            "name": "Apify API"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// kaitoeasyapi returns one item per tweet. Filter mock placeholders + retweets + replies. Field shape: snake_case nested (retweeted_tweet, quoted_tweet).\nconst TIER_BY_HANDLE = {\n  'random_walker': 'high',\n  'hardmaru': 'high',\n  'sarahookr': 'high',\n  'simonw': 'high',\n  'rasbt': 'high',\n  'swyx': 'medium',\n  'goodside': 'medium',\n  'virattt': 'medium',\n  'jeremyphoward': 'medium',\n  'drjimfan': 'medium',\n  'sayashk': 'medium',\n};\nconst HIGH_VOLUME = new Set(['simonw', 'rasbt', 'swyx', 'sarahookr', 'virattt']);\nconst WINDOW_DAYS = 14;\nconst cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;\nconst items = $input.all();\nconst out = [];\nfor (const item of items) {\n  const t = item.json;\n  // Mock-tweet billing-floor filler: kaitoeasyapi returns these when query yields no real results\n  if (t.type === 'mock_tweet' || t.id === -1 || t.id === '-1') continue;\n  if (t.type && t.type !== 'tweet') continue;\n  // Retweets nest as retweeted_tweet payload on this actor (no isRetweet boolean)\n  if (t.retweeted_tweet) continue;\n  if (t.isReply === true) continue;\n  const text = (t.text || t.fullText || '').trim();\n  if (!text) continue;\n  const minLen = t.isQuote === true ? 30 : 80;\n  if (text.length < minLen) continue;\n  const raw = t.createdAt || t.created_at || '';\n  const ts = raw ? new Date(raw).getTime() : 0;\n  if (!ts || isNaN(ts) || ts < cutoff) continue;\n  const author = t.author || {};\n  const handle = String(author.userName || author.screen_name || author.username || '').toLowerCase();\n  const likes = Number(t.likeCount || t.favoriteCount || 0);\n  const replies = Number(t.replyCount || 0);\n  const retweets = Number(t.retweetCount || 0);\n  if (HIGH_VOLUME.has(handle)) {\n    const engagement = likes + replies * 3;\n    if (engagement < 30) continue;\n  }\n  const id = String(t.id || t.tweetId || t.id_str || '');\n  let url = t.url || t.twitterUrl || '';\n  if (!url && id && handle) url = 'https://x.com/' + handle + '/status/' + id;\n  if (!url) continue;\n  out.push({ json: {\n    tweet_id: id,\n    url: url,\n    text: text.substring(0, 8000),\n    is_quote: t.isQuote === true,\n    quoted_text: (t.quoted_tweet && t.quoted_tweet.text) ? String(t.quoted_tweet.text).substring(0, 2000) : '',\n    author_handle: handle,\n    author_name: author.name || author.fullName || handle,\n    posted_at: new Date(ts).toISOString(),\n    likes: likes,\n    replies: replies,\n    retweets: retweets,\n    views: Number(t.viewCount || 0),\n    tier: TIER_BY_HANDLE[handle] || 'medium',\n  }});\n}\nreturn out;"
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000006",
+        "name": "Parse + Filter Tweets",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          912,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/databases/aaaaaaaa-0000-4000-8000-000000000001/query",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{\"filter\": {\"and\": [{\"property\": \"Type\", \"select\": {\"equals\": \"Source\"}}, {\"property\": \"Source Type\", \"select\": {\"equals\": \"x\"}}]}, \"sorts\": [{\"property\": \"Collected At\", \"direction\": \"descending\"}], \"page_size\": 100}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000007",
+        "name": "Notion: Query Existing X",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1120,
+          304
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const tweets = $('Parse + Filter Tweets').all().map(it => it.json);\nconst existing = $input.all();\nconst existingIds = new Set();\nconst existingUrls = new Set();\nfor (const e of existing) {\n  const results = (e.json.results) || [];\n  for (const page of results) {\n    const ep = (page.properties && page.properties.Episode && page.properties.Episode.rich_text) || [];\n    for (const seg of ep) {\n      const u = (seg.text && seg.text.link && seg.text.link.url) || '';\n      if (u) existingUrls.add(u);\n    }\n    const cmt = (page.properties && page.properties.Comment && page.properties.Comment.rich_text) || [];\n    for (const seg of cmt) {\n      const c = (seg.text && seg.text.content) || '';\n      const idMatch = c.match(/tweet_id: (\\d+)/);\n      if (idMatch) existingIds.add(idMatch[1]);\n    }\n  }\n}\nconst newTweets = tweets.filter(p => !existingUrls.has(p.url) && !existingIds.has(p.tweet_id));\nreturn newTweets.map(p => ({ json: p }));"
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000008",
+        "name": "Dedup: New Tweets Only",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1344,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const title = j.author_name + \" — X: \" + j.text.substring(0, 60).replace(/\\s+/g, \" \").trim();\n  const tChunks = [];\n  const fullText = j.is_quote && j.quoted_text ? (j.text + \"\\n\\n— quoting —\\n\" + j.quoted_text) : j.text;\n  for (let i = 0; i < fullText.length; i += 1900) tChunks.push(fullText.substring(i, i + 1900));\n  if (!tChunks.length) tChunks.push(\"\");\n  const tBlocks = tChunks.map(c => ({ object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: c } }] } }));\n  return {\n    parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" },\n    properties: {\n      Title: { title: [{ text: { content: title.substring(0, 200) } }] },\n      Type: { select: { name: \"Source\" } },\n      \"Source Type\": { select: { name: \"x\" } },\n      Episode: { rich_text: [{ type: \"text\", text: { content: (\"X — @\" + j.author_handle).substring(0, 2000), link: j.url ? { url: j.url } : null } }] },\n      Published: { date: { start: (j.posted_at || \"\").substring(0, 10) || null } },\n      Comment: { rich_text: [{ text: { content: (\"tweet_id: \" + j.tweet_id + \" | likes: \" + j.likes + \" | replies: \" + j.replies + \" | retweets: \" + j.retweets + \" | views: \" + j.views).substring(0, 2000) } }] }\n    },\n    children: [\n      { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tweet Content\" } }] } },\n      ...tBlocks.slice(0, 80)\n    ]\n  };\n})()) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000009",
+        "name": "Notion: Create X Source",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1568,
+          304
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "source_page_id",
+                "type": "string",
+                "value": "={{ $json.id }}"
+              },
+              {
+                "id": "2",
+                "name": "_tweet_url",
+                "type": "string",
+                "value": "={{ $('Dedup: New Tweets Only').item.json.url }}"
+              },
+              {
+                "id": "3",
+                "name": "_tweet_text",
+                "type": "string",
+                "value": "={{ $('Dedup: New Tweets Only').item.json.text }}"
+              },
+              {
+                "id": "4",
+                "name": "_quoted_text",
+                "type": "string",
+                "value": "={{ $('Dedup: New Tweets Only').item.json.quoted_text }}"
+              },
+              {
+                "id": "5",
+                "name": "_author_name",
+                "type": "string",
+                "value": "={{ $('Dedup: New Tweets Only').item.json.author_name }}"
+              },
+              {
+                "id": "6",
+                "name": "_author_handle",
+                "type": "string",
+                "value": "={{ $('Dedup: New Tweets Only').item.json.author_handle }}"
+              },
+              {
+                "id": "7",
+                "name": "_posted_at",
+                "type": "string",
+                "value": "={{ $('Dedup: New Tweets Only').item.json.posted_at }}"
+              },
+              {
+                "id": "8",
+                "name": "_tweet_id",
+                "type": "string",
+                "value": "={{ $('Dedup: New Tweets Only').item.json.tweet_id }}"
+              },
+              {
+                "id": "9",
+                "name": "_tier",
+                "type": "string",
+                "value": "={{ $('Dedup: New Tweets Only').item.json.tier || 'high' }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000010",
+        "name": "Carry Source Context",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1792,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-6\", max_tokens: 6000, system: [{ type: \"text\", text: \"You extract content ideas from X (Twitter) posts for Alec Foster. Alec is Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Audience for Alec's LinkedIn: marketers, AI practitioners, execs/CMOs, governance folks, builders. Alec's interests (use to score Relevance): Claude (all Anthropic products), Claude Code, agentic AI, AI governance, responsible AI, AI safety, AI ethics, privacy, marketing AI, advertising personalization, adtech, measurement, enterprise AI, MCP, prompt engineering, LLM evals, AI strategy for CMOs, MMA frameworks (ALTT, ACE, CAP, AURA, RAIL, ARC, SIFT), Codex. Tweets are short. Most won't yield ideas. Return ideas: [] for jokes, vibes, brief reactions, memes, self-promo, or off-topic. Yield 1 idea ONLY when the tweet has a substantive analytical claim, framework, paper drop, eval result, or technical observation Alec could amplify, counter, or build on. Be aggressive about filtering filler.\", cache_control: { type: \"ephemeral\" } }], messages: [{ role: \"user\", content: \"Extract a content idea from this X post.\\n\\nAuthor: \" + ($json._author_name || \"\") + \" (@\" + ($json._author_handle || \"\") + \")\\nPosted: \" + ($json._posted_at || \"\") + \"\\nURL: \" + ($json._tweet_url || \"\") + \"\\n\\nTWEET:\\n\" + ($json._tweet_text || \"\") + ($json._quoted_text ? (\"\\n\\nQUOTED TWEET:\\n\" + $json._quoted_text) : \"\") + \"\\n\\nFor the idea (return [] if not substantive enough):\\n- topic_headline: punchy, specific (3-8 words)\\n- hook: 1-2 sentences setting Alec's angle\\n- key_points: 3-5 bullets (>=15 words each, with specifics)\\n- observations: 1-3 bullets of nuance\\n- tips: 0-3 actionable takeaways\\n- quotes: 1 verbatim tweet excerpt (>=10 words, attribute to author)\\n- topics: from {Claude, Agents, AI Governance, Marketing AI, Measurement, AI Strategy, LLMs, MCP, Voice AI, AI Safety, Enterprise AI, Creator Economy, Policy, Research, Content, Prompt Engineering, Reddit/Search, OpenAI, Anthropic, Google, Meta, Codex}\\n- audience: subset of {Marketers, Execs/CMOs, Practitioners, Governance, Builders}\\n- hot_take_potential: High|Medium|Low\\n- utility: High|Medium|Low\\n- relevance: High|Medium|Low\\n- format: Hot Take|Explainer|How-To|Framework|Announcement|Case Study\\n- draft_angle: 1 line on Alec's take\\n- why_it_matters: 1 sentence MMA context\\n- further_reading: any URLs/citations\\n\\nBanned words: Unlock, Unleash, Synergy, Uncover, Furthermore, Leverage, Landscape, Delve, Prowess, Realm, Unearth, Tapestry, Crucial, Pivotal, Revolutionary, Lifeblood, Treasure trove, Dive into, Game-changing, Cutting edge, Empower.\\nNo em-dashes. Use commas, colons, periods, parentheses.\\n\\nOutput strict JSON: {\\\"ideas\\\": [...]} or {\\\"ideas\\\": []}.\" }] }) }}",
+          "options": {
+            "timeout": 180000
+          }
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000011",
+        "name": "Claude Extract X Ideas",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2000,
+          304
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "hrJsx0jwWYoqTin3",
+            "name": "Anthropic API"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const TOPIC_ALIASES = {\n  \"google gemini\": \"Google\", \"gemini\": \"Google\", \"google\": \"Google\",\n  \"chatgpt\": \"OpenAI\", \"gpt-5\": \"OpenAI\", \"gpt-4\": \"OpenAI\", \"openai\": \"OpenAI\",\n  \"anthropic\": \"Anthropic\", \"claude sonnet\": \"Claude\", \"claude opus\": \"Claude\", \"claude haiku\": \"Claude\", \"claude\": \"Claude\",\n  \"meta ai\": \"Meta\", \"llama\": \"Meta\", \"meta\": \"Meta\",\n  \"agent\": \"Agents\", \"agents\": \"Agents\", \"agentic\": \"Agents\", \"agentic ai\": \"Agents\", \"ai agent\": \"Agents\",\n  \"governance\": \"AI Governance\", \"ai governance\": \"AI Governance\", \"responsible ai\": \"AI Governance\", \"ethics\": \"AI Governance\", \"ai ethics\": \"AI Governance\",\n  \"safety\": \"AI Safety\", \"ai safety\": \"AI Safety\", \"alignment\": \"AI Safety\",\n  \"policy\": \"Policy\", \"regulation\": \"Policy\", \"regulatory\": \"Policy\", \"eu ai act\": \"Policy\",\n  \"marketing\": \"Marketing AI\", \"marketing ai\": \"Marketing AI\", \"advertising\": \"Marketing AI\", \"adtech\": \"Marketing AI\", \"personalization\": \"Marketing AI\",\n  \"measurement\": \"Measurement\", \"attribution\": \"Measurement\", \"analytics\": \"Measurement\",\n  \"strategy\": \"AI Strategy\", \"ai strategy\": \"AI Strategy\", \"enterprise strategy\": \"AI Strategy\",\n  \"llm\": \"LLMs\", \"llms\": \"LLMs\", \"large language model\": \"LLMs\", \"foundation model\": \"LLMs\",\n  \"mcp\": \"MCP\", \"model context protocol\": \"MCP\",\n  \"voice\": \"Voice AI\", \"voice ai\": \"Voice AI\", \"tts\": \"Voice AI\", \"stt\": \"Voice AI\",\n  \"enterprise\": \"Enterprise AI\", \"enterprise ai\": \"Enterprise AI\", \"b2b ai\": \"Enterprise AI\",\n  \"creator\": \"Creator Economy\", \"creator economy\": \"Creator Economy\",\n  \"research\": \"Research\", \"paper\": \"Research\", \"arxiv\": \"Research\",\n  \"content\": \"Content\",\n  \"prompt\": \"Prompt Engineering\", \"prompt engineering\": \"Prompt Engineering\", \"prompting\": \"Prompt Engineering\",\n  \"search\": \"Reddit/Search\", \"reddit\": \"Reddit/Search\", \"perplexity\": \"Reddit/Search\",\n  \"codex\": \"Codex\", \"openai codex\": \"Codex\", \"codex cli\": \"Codex\"\n};\nconst VALID_TOPICS = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nfunction normalize(topic) {\n  const k = String(topic || \"\").trim().toLowerCase();\n  if (TOPIC_ALIASES[k]) return TOPIC_ALIASES[k];\n  for (const [alias, target] of Object.entries(TOPIC_ALIASES)) {\n    if (k.includes(alias)) return target;\n  }\n  return null;\n}\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  let text = '';\n  if (j.content && Array.isArray(j.content) && j.content[0]) text = j.content[0].text || '';\n  else if (typeof j.body === 'string') text = j.body;\n  else text = JSON.stringify(j);\n  text = text.replace(/^```json\\s*/i, '').replace(/```\\s*$/, '').trim();\n  let parsed;\n  try { parsed = JSON.parse(text); } catch (e) { continue; }\n  const ideas = (parsed.ideas) || [];\n  for (const idea of ideas) {\n    const merged = new Set();\n    for (const t of (idea.topics || [])) {\n      const n = normalize(t);\n      if (n && VALID_TOPICS.has(n)) merged.add(n);\n    }\n    if (!merged.size) merged.add('AI Strategy');\n    if (String(idea.relevance || '').toLowerCase() === 'low' && String(idea.utility || '').toLowerCase() === 'low') continue;\n    out.push({ json: {\n      topic_headline: idea.topic_headline || '',\n      hook: idea.hook || '',\n      key_points: idea.key_points || [],\n      observations: idea.observations || [],\n      tips: idea.tips || [],\n      quotes: idea.quotes || [],\n      audience: idea.audience || [],\n      hot_take_potential: idea.hot_take_potential || 'Medium',\n      utility: idea.utility || 'Medium',\n      relevance: idea.relevance || 'Medium',\n      format: idea.format || 'Explainer',\n      draft_angle: idea.draft_angle || '',\n      why_it_matters: idea.why_it_matters || '',\n      further_reading: idea.further_reading || [],\n      merged_topics: Array.from(merged),\n      podcast_name: 'X — @' + (($(\"Carry Source Context\").item.json._author_handle) || ''),\n      episode_title: 'Tweet by ' + (($(\"Carry Source Context\").item.json._author_name) || ''),\n      episode_url: ($(\"Carry Source Context\").item.json._tweet_url) || '',\n      episode_published: ($(\"Carry Source Context\").item.json._posted_at) || '',\n      source_page_id: ($(\"Carry Source Context\").item.json.source_page_id) || '',\n      source_type: 'x',\n      transcript_id: ($(\"Carry Source Context\").item.json._tweet_id) || '',\n      transcript_source: 'X',\n      extraction_model: 'Sonnet 4.6',\n    } });\n  }\n}\nreturn out;"
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000012",
+        "name": "Parse Ideas + Split",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2224,
+          304
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const props = {\n    Title: { title: [{ text: { content: (j.topic_headline || \"Untitled\").substring(0, 200) } }] },\n    Type: { select: { name: \"Idea\" } },\n    \"Source Type\": { select: { name: \"x\" } },\n    Episode: { rich_text: [{ type: \"text\", text: { content: (j.episode_title || \"\").substring(0, 2000), link: j.episode_url ? { url: j.episode_url } : null } }] },\n    Published: { date: { start: (j.episode_published || \"\").substring(0, 10) || null } },\n    \"Hot Take Potential\": { select: { name: j.hot_take_potential || \"Medium\" } },\n    Utility: { select: { name: j.utility || \"Medium\" } },\n    Relevance: { select: { name: j.relevance || \"Medium\" } },\n    Format: { select: { name: j.format || \"Explainer\" } },\n    Topics: { multi_select: (j.merged_topics || []).map(t => ({ name: t })) },\n    Audience: { multi_select: (j.audience || []).map(a => ({ name: a })) },\n    Summary: { rich_text: [{ text: { content: (j.hook || \"\").substring(0, 2000) } }] },\n    \"Extraction Model\": { select: { name: \"Sonnet 4.6\" } },\n    \"Transcript Source\": { select: { name: \"X\" } },\n    \"Transcript ID\": { rich_text: [{ text: { content: (j.transcript_id || \"\").substring(0, 2000) } }] },\n    \"Episode Source\": j.source_page_id ? { relation: [{ id: j.source_page_id }] } : { relation: [] }\n  };\n  const children = [\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Hook\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.hook || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Draft Angle\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.draft_angle || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Key Points\" } }] } },\n    ...(j.key_points || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Observations\" } }] } },\n    ...(j.observations || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tips\" } }] } },\n    ...(j.tips || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Quotes\" } }] } },\n    ...(j.quotes || []).map(q => ({ object: \"block\", type: \"quote\", quote: { rich_text: [{ type: \"text\", text: { content: (\"\\\"\" + (q.quote || q.text || \"\") + \"\\\" — \" + (q.speaker || \"\")).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Why It Matters\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.why_it_matters || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Further Reading\" } }] } },\n    ...(j.further_reading || []).map(r => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(r).substring(0, 2000) } }] } }))\n  ];\n  return { parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" }, properties: props, children };\n})()) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000013",
+        "name": "Notion: Create Idea Page",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2448,
+          304
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Fri 11am PT": {
+        "main": [
+          [
+            {
+              "node": "Handle Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Handle Config": {
+        "main": [
+          [
+            {
+              "node": "Apify: Fetch Tweets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apify: Fetch Tweets": {
+        "main": [
+          [
+            {
+              "node": "Parse + Filter Tweets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse + Filter Tweets": {
+        "main": [
+          [
+            {
+              "node": "Notion: Query Existing X",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notion: Query Existing X": {
+        "main": [
+          [
+            {
+              "node": "Dedup: New Tweets Only",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Dedup: New Tweets Only": {
+        "main": [
+          [
+            {
+              "node": "Notion: Create X Source",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notion: Create X Source": {
+        "main": [
+          [
+            {
+              "node": "Carry Source Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Carry Source Context": {
+        "main": [
+          [
+            {
+              "node": "Claude Extract X Ideas",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Extract X Ideas": {
+        "main": [
+          [
+            {
+              "node": "Parse Ideas + Split",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Ideas + Split": {
+        "main": [
+          [
+            {
+              "node": "Notion: Create Idea Page",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Alec Foster",
+    "name": "Version 8afaaf66",
+    "description": "",
+    "autosaved": true,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-26T21:07:40.738Z",
+        "id": 161,
+        "workflowId": "6eIPF22pm43oxEjW",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "event": "activated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      },
+      {
+        "createdAt": "2026-04-26T21:13:25.427Z",
+        "id": 163,
+        "workflowId": "6eIPF22pm43oxEjW",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "event": "activated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      },
+      {
+        "createdAt": "2026-04-26T21:13:25.325Z",
+        "id": 162,
+        "workflowId": "6eIPF22pm43oxEjW",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "event": "deactivated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      }
+    ]
+  }
+}

@@ -1,0 +1,998 @@
+{
+  "name": "Content Pipeline: Web Capture Webhook",
+  "description": "Receives ArcPush content captures. Routes by content state: if pre-scraped content is provided, passthrough; otherwise scrape via WebCrawlerAPI. Reddit is scraped client-side via .json endpoint.",
+  "nodes": [
+    {
+      "name": "Web Capture Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        100,
+        400
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "content-capture",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "webhookId": "content-capture"
+    },
+    {
+      "name": "Unwrap Body",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        300,
+        400
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "u1",
+              "name": "title",
+              "value": "={{ $json.body.title || \"Untitled\" }}",
+              "type": "string"
+            },
+            {
+              "id": "u2",
+              "name": "url",
+              "value": "={{ $json.body.url }}",
+              "type": "string"
+            },
+            {
+              "id": "u3",
+              "name": "content",
+              "value": "={{ $json.body.content || \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "u4",
+              "name": "contentType",
+              "value": "={{ $json.body.contentType || \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "u5",
+              "name": "source",
+              "value": "={{ $json.body.source || \"arcpush\" }}",
+              "type": "string"
+            },
+            {
+              "id": "u6",
+              "name": "sourceType",
+              "value": "={{ $json.body.sourceType || \"unknown\" }}",
+              "type": "string"
+            },
+            {
+              "id": "u7",
+              "name": "capturedAt",
+              "value": "={{ $json.body.capturedAt || $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "u8",
+              "name": "needsScrape",
+              "value": "={{ $json.body.needsScrape === true || $json.body.needsScrape === \"true\" }}",
+              "type": "boolean"
+            },
+            {
+              "id": "u9",
+              "name": "redditImages",
+              "value": "={{ $json.body.redditImages || [] }}",
+              "type": "array"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "name": "Has Content?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        520,
+        400
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "r1",
+                    "leftValue": "={{ ($json.content || \"\") !== \"\" }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "hasContent"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "r2",
+                    "leftValue": "={{ $json.needsScrape }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "scrape"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Pass Through Content",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        740,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": []
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "name": "Merge Branches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1180,
+        400
+      ],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+    {
+      "name": "Scrape via WebCrawlerAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        740,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.webcrawlerapi.com/v2/scrape",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer REPLACE_WITH_API_TOKEN"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $json.url, output_formats: [\"markdown\"], main_content_only: true }) }}",
+        "options": {}
+      }
+    },
+    {
+      "name": "Merge Scraped Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        960,
+        500
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "title",
+              "value": "={{ $json.page_title || $('Unwrap Body').item.json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "s2",
+              "name": "url",
+              "value": "={{ $('Unwrap Body').item.json.url }}",
+              "type": "string"
+            },
+            {
+              "id": "s3",
+              "name": "content",
+              "value": "={{ $json.markdown || $json.text || \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "s4",
+              "name": "contentType",
+              "value": "page-text",
+              "type": "string"
+            },
+            {
+              "id": "s5",
+              "name": "source",
+              "value": "={{ $('Unwrap Body').item.json.source }}",
+              "type": "string"
+            },
+            {
+              "id": "s6",
+              "name": "sourceType",
+              "value": "={{ $('Unwrap Body').item.json.sourceType }}",
+              "type": "string"
+            },
+            {
+              "id": "s7",
+              "name": "redditImages",
+              "value": "={{ [] }}",
+              "type": "array"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "name": "Normalize for Notion",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1400,
+        400
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "n1",
+              "name": "title",
+              "value": "={{ $json.title || \"Untitled\" }}",
+              "type": "string"
+            },
+            {
+              "id": "n2",
+              "name": "url",
+              "value": "={{ $json.url }}",
+              "type": "string"
+            },
+            {
+              "id": "n3",
+              "name": "source",
+              "value": "web-capture",
+              "type": "string"
+            },
+            {
+              "id": "n4",
+              "name": "source_type",
+              "value": "manual",
+              "type": "string"
+            },
+            {
+              "id": "n5",
+              "name": "summary",
+              "value": "={{ ($json.content || \"\").substring(0, 500) }}",
+              "type": "string"
+            },
+            {
+              "id": "n6",
+              "name": "comment",
+              "value": "={{ $json.redditImages && $json.redditImages.length > 0 ? \"Images: \" + $json.redditImages.join(\" | \") : \"\" }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "name": "Save to Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1620,
+        400
+      ],
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "databaseId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_DATABASE_ID",
+          "mode": "id"
+        },
+        "title": "={{ $json.title }}",
+        "simple": true,
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "URL|url",
+              "type": "url",
+              "urlValue": "={{ $json.url }}"
+            },
+            {
+              "key": "Source|select",
+              "type": "select",
+              "selectValue": "={{ $json.source }}"
+            },
+            {
+              "key": "Source Type|select",
+              "type": "select",
+              "selectValue": "={{ $json.source_type }}"
+            },
+            {
+              "key": "Summary|rich_text",
+              "type": "rich_text",
+              "textContent": "={{ $json.summary || \"\" }}"
+            },
+            {
+              "key": "Comment|rich_text",
+              "type": "rich_text",
+              "textContent": "={{ $json.comment || \"\" }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "notionApi": {
+          "id": "REPLACE_WITH_NOTIONAPI_CREDENTIAL_ID",
+          "name": "Notion account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Web Capture Webhook": {
+      "main": [
+        [
+          {
+            "node": "Unwrap Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unwrap Body": {
+      "main": [
+        [
+          {
+            "node": "Has Content?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Content?": {
+      "main": [
+        [
+          {
+            "node": "Pass Through Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Scrape via WebCrawlerAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pass Through Content": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Branches": {
+      "main": [
+        [
+          {
+            "node": "Normalize for Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape via WebCrawlerAPI": {
+      "main": [
+        [
+          {
+            "node": "Merge Scraped Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Scraped Fields": {
+      "main": [
+        [
+          {
+            "node": "Merge Branches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Normalize for Notion": {
+      "main": [
+        [
+          {
+            "node": "Save to Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "activeVersionId": "aaaaaaaa-0000-4000-8000-000000000146",
+  "versionCounter": 57,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-04-17T22:16:07.912Z",
+    "createdAt": "2026-04-17T22:16:07.912Z",
+    "versionId": "aaaaaaaa-0000-4000-8000-000000000146",
+    "workflowId": "p6MCuDXS69JCbYaZ",
+    "nodes": [
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000147",
+        "name": "Web Capture Webhook",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          100,
+          400
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "content-capture",
+          "responseMode": "onReceived",
+          "options": {}
+        },
+        "webhookId": "aaaaaaaa-0000-4000-8000-000000000148"
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000149",
+        "name": "Unwrap Body",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          300,
+          400
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "u1",
+                "name": "title",
+                "value": "={{ $json.body.title || \"Untitled\" }}",
+                "type": "string"
+              },
+              {
+                "id": "u2",
+                "name": "url",
+                "value": "={{ $json.body.url }}",
+                "type": "string"
+              },
+              {
+                "id": "u3",
+                "name": "content",
+                "value": "={{ $json.body.content || \"\" }}",
+                "type": "string"
+              },
+              {
+                "id": "u4",
+                "name": "contentType",
+                "value": "={{ $json.body.contentType || \"\" }}",
+                "type": "string"
+              },
+              {
+                "id": "u5",
+                "name": "source",
+                "value": "={{ $json.body.source || \"arcpush\" }}",
+                "type": "string"
+              },
+              {
+                "id": "u6",
+                "name": "sourceType",
+                "value": "={{ $json.body.sourceType || \"unknown\" }}",
+                "type": "string"
+              },
+              {
+                "id": "u7",
+                "name": "capturedAt",
+                "value": "={{ $json.body.capturedAt || $now.toISO() }}",
+                "type": "string"
+              },
+              {
+                "id": "u8",
+                "name": "needsScrape",
+                "value": "={{ $json.body.needsScrape === true || $json.body.needsScrape === \"true\" }}",
+                "type": "boolean"
+              },
+              {
+                "id": "u9",
+                "name": "redditImages",
+                "value": "={{ $json.body.redditImages || [] }}",
+                "type": "array"
+              }
+            ]
+          },
+          "includeOtherFields": false,
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000150",
+        "name": "Has Content?",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.4,
+        "position": [
+          520,
+          400
+        ],
+        "parameters": {
+          "mode": "rules",
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "typeValidation": "strict",
+                    "version": 3
+                  },
+                  "conditions": [
+                    {
+                      "id": "r1",
+                      "leftValue": "={{ ($json.content || \"\") !== \"\" }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "hasContent"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "typeValidation": "strict",
+                    "version": 3
+                  },
+                  "conditions": [
+                    {
+                      "id": "r2",
+                      "leftValue": "={{ $json.needsScrape }}",
+                      "rightValue": true,
+                      "operator": {
+                        "type": "boolean",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "scrape"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000151",
+        "name": "Pass Through Content",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          740,
+          300
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": []
+          },
+          "includeOtherFields": true,
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000152",
+        "name": "Merge Branches",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3.2,
+        "position": [
+          1180,
+          400
+        ],
+        "parameters": {
+          "mode": "append"
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000153",
+        "name": "Scrape via WebCrawlerAPI",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          740,
+          500
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.webcrawlerapi.com/v2/scrape",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer REPLACE_WITH_WEBCRAWLER_TOKEN"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ url: $json.url, output_formats: [\"markdown\"], main_content_only: true }) }}",
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000154",
+        "name": "Merge Scraped Fields",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          960,
+          500
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "s1",
+                "name": "title",
+                "value": "={{ $json.page_title || $('Unwrap Body').item.json.title }}",
+                "type": "string"
+              },
+              {
+                "id": "s2",
+                "name": "url",
+                "value": "={{ $('Unwrap Body').item.json.url }}",
+                "type": "string"
+              },
+              {
+                "id": "s3",
+                "name": "content",
+                "value": "={{ $json.markdown || $json.text || \"\" }}",
+                "type": "string"
+              },
+              {
+                "id": "s4",
+                "name": "contentType",
+                "value": "page-text",
+                "type": "string"
+              },
+              {
+                "id": "s5",
+                "name": "source",
+                "value": "={{ $('Unwrap Body').item.json.source }}",
+                "type": "string"
+              },
+              {
+                "id": "s6",
+                "name": "sourceType",
+                "value": "={{ $('Unwrap Body').item.json.sourceType }}",
+                "type": "string"
+              },
+              {
+                "id": "s7",
+                "name": "redditImages",
+                "value": "={{ [] }}",
+                "type": "array"
+              }
+            ]
+          },
+          "includeOtherFields": false,
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000155",
+        "name": "Normalize for Notion",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1400,
+          400
+        ],
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "n1",
+                "name": "title",
+                "value": "={{ $json.title || \"Untitled\" }}",
+                "type": "string"
+              },
+              {
+                "id": "n2",
+                "name": "url",
+                "value": "={{ $json.url }}",
+                "type": "string"
+              },
+              {
+                "id": "n3",
+                "name": "source",
+                "value": "web-capture",
+                "type": "string"
+              },
+              {
+                "id": "n4",
+                "name": "source_type",
+                "value": "manual",
+                "type": "string"
+              },
+              {
+                "id": "n5",
+                "name": "summary",
+                "value": "={{ ($json.content || \"\").substring(0, 500) }}",
+                "type": "string"
+              },
+              {
+                "id": "n6",
+                "name": "comment",
+                "value": "={{ $json.redditImages && $json.redditImages.length > 0 ? \"Images: \" + $json.redditImages.join(\" | \") : \"\" }}",
+                "type": "string"
+              }
+            ]
+          },
+          "includeOtherFields": false,
+          "options": {}
+        }
+      },
+      {
+        "id": "aaaaaaaa-0000-4000-8000-000000000156",
+        "name": "Save to Notion",
+        "type": "n8n-nodes-base.notion",
+        "typeVersion": 2.2,
+        "position": [
+          1620,
+          400
+        ],
+        "parameters": {
+          "resource": "databasePage",
+          "operation": "create",
+          "databaseId": {
+            "__rl": true,
+            "value": "aaaaaaaa-0000-4000-8000-000000000001",
+            "mode": "id"
+          },
+          "title": "={{ $json.title }}",
+          "simple": true,
+          "propertiesUi": {
+            "propertyValues": [
+              {
+                "key": "URL|url",
+                "type": "url",
+                "urlValue": "={{ $json.url }}"
+              },
+              {
+                "key": "Source|select",
+                "type": "select",
+                "selectValue": "={{ $json.source }}"
+              },
+              {
+                "key": "Source Type|select",
+                "type": "select",
+                "selectValue": "={{ $json.source_type }}"
+              },
+              {
+                "key": "Summary|rich_text",
+                "type": "rich_text",
+                "textContent": "={{ $json.summary || \"\" }}"
+              },
+              {
+                "key": "Comment|rich_text",
+                "type": "rich_text",
+                "textContent": "={{ $json.comment || \"\" }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "notionApi": {
+            "id": "ENCulrOmhE9JA4kU",
+            "name": "Notion account"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Web Capture Webhook": {
+        "main": [
+          [
+            {
+              "node": "Unwrap Body",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Unwrap Body": {
+        "main": [
+          [
+            {
+              "node": "Has Content?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Content?": {
+        "main": [
+          [
+            {
+              "node": "Pass Through Content",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Scrape via WebCrawlerAPI",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Pass Through Content": {
+        "main": [
+          [
+            {
+              "node": "Merge Branches",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Branches": {
+        "main": [
+          [
+            {
+              "node": "Normalize for Notion",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Scrape via WebCrawlerAPI": {
+        "main": [
+          [
+            {
+              "node": "Merge Scraped Fields",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge Scraped Fields": {
+        "main": [
+          [
+            {
+              "node": "Merge Branches",
+              "type": "main",
+              "index": 1
+            }
+          ]
+        ]
+      },
+      "Normalize for Notion": {
+        "main": [
+          [
+            {
+              "node": "Save to Notion",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Alec Foster",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-17T22:16:11.495Z",
+        "id": 38,
+        "workflowId": "p6MCuDXS69JCbYaZ",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000146",
+        "event": "activated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      }
+    ]
+  }
+}

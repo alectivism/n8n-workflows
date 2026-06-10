@@ -1,20 +1,20 @@
-# Podcast RSS + Vimeo Intake
+# Reddit AI Subreddits — Monthly Top
 
-Twice-weekly cron: pulls podcast RSS (+ Vimeo) → transcribes → extracts topic ideas with an LLM → writes to Notion.
+Monthly cron (first Friday) that grabs the month's top AI subreddit posts and files them to Notion.
 
 Part of a personal content pipeline by [Alec Foster](https://www.alecfoster.com). Importable as a single n8n workflow JSON.
 
 ## What it does
 
-Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a transcription service, polls for completion with a Wait node, extracts topic ideas with an LLM, stores transcripts in Google Drive, and writes ideas to Notion.
+Same shape as the weekly variant but reads `top/.rss?t=month` and runs on the first Friday of each month (cron `0 0 9 1-7 * 5`). Useful for a slower, higher-bar digest.
 
 ## At a glance
 
 | | |
 |---|---|
 | Trigger | Schedule (cron) |
-| Schedule | Tue & Fri, 10:00 |
-| Nodes | 40 |
+| Schedule | Monthly, first Fri 09:00 |
+| Nodes | 12 |
 | Destination | Notion content database |
 
 ## Quick start
@@ -28,8 +28,7 @@ Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a trans
 
 | Service | n8n credential type | Notes |
 |---|---|---|
-| Google Drive | `googleDriveOAuth2Api` | OAuth2 for transcript storage |
-| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for the transcription API and the LLM |
+| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for the LLM/API used to score posts |
 
 Don't paste secrets into the JSON. n8n's credential store is encrypted; the JSON only references credential IDs.
 

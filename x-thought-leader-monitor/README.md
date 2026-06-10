@@ -1,20 +1,20 @@
-# Podcast RSS + Vimeo Intake
+# X Thought Leader Monitor
 
-Twice-weekly cron: pulls podcast RSS (+ Vimeo) → transcribes → extracts topic ideas with an LLM → writes to Notion.
+Weekly cron that pulls recent posts from a set of X/Twitter thought leaders, scores them, and files keepers to Notion.
 
 Part of a personal content pipeline by [Alec Foster](https://www.alecfoster.com). Importable as a single n8n workflow JSON.
 
 ## What it does
 
-Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a transcription service, polls for completion with a Wait node, extracts topic ideas with an LLM, stores transcripts in Google Drive, and writes ideas to Notion.
+Pulls recent posts from a configurable set of X accounts (via an HTTP-header-authed scraper API), scores each for relevance with an LLM, and writes the high-signal ones to Notion. Supply your own account roster.
 
 ## At a glance
 
 | | |
 |---|---|
 | Trigger | Schedule (cron) |
-| Schedule | Tue & Fri, 10:00 |
-| Nodes | 40 |
+| Schedule | Weekly, Fri 11:00 |
+| Nodes | 11 |
 | Destination | Notion content database |
 
 ## Quick start
@@ -28,8 +28,7 @@ Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a trans
 
 | Service | n8n credential type | Notes |
 |---|---|---|
-| Google Drive | `googleDriveOAuth2Api` | OAuth2 for transcript storage |
-| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for the transcription API and the LLM |
+| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for your X scraper API and the LLM scoring step |
 
 Don't paste secrets into the JSON. n8n's credential store is encrypted; the JSON only references credential IDs.
 

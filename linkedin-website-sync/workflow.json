@@ -1,0 +1,210 @@
+{
+  "name": "LinkedIn Posts → personal-website (weekly)",
+  "description": "Weekly cron: scrapes Alec's LinkedIn via Apify, filters to Alec's own posts (URL slug must contain /posts/alecfoster_), commits normalized JSON to alectivism/personal-website.",
+  "nodes": [
+    {
+      "name": "Every Sunday 6am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                0
+              ],
+              "triggerAtHour": 6,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Apify: scrape LinkedIn posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/supreme_coder~linkedin-post/run-sync-get-dataset-items",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "{\"urls\":[\"https://www.linkedin.com/in/alecfoster\"],\"limitPerSource\":20,\"deepScrape\":true}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Apify API"
+        }
+      }
+    },
+    {
+      "name": "Build linkedin-posts.json",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "\nconst raw = items.map((it) => it.json || it);\n\nfunction pick(o, keys) {\n  for (const k of keys) if (o[k] !== undefined && o[k] !== null) return o[k];\n  return undefined;\n}\n\nfunction isOriginal(p) {\n  const url = (pick(p, ['url', 'postUrl', 'link', 'permalink']) || '').toString().toLowerCase();\n  if (!url.includes('/posts/alecfoster_')) return false;\n  return true;\n}\n\nfunction normalize(p) {\n  const text = pick(p, ['text', 'content', 'postContent', 'description']) || '';\n  const url = pick(p, ['url', 'postUrl', 'link', 'permalink']) || '';\n  const posted_at = pick(p, ['postedAt', 'postedAtIso', 'publishedAt', 'datePublished', 'postedAtTimestamp']);\n  const likes = pick(p, ['totalReactionCount', 'numLikes', 'likesCount', 'likes', 'reactionsCount']) || 0;\n  const comments = pick(p, ['commentsCount', 'numComments', 'comments']) || 0;\n  const image_url = pick(p, ['imageUrl', 'thumbnail', 'image']) || null;\n  const type = pick(p, ['postType', 'type']) || 'post';\n  let iso = '';\n  if (typeof posted_at === 'number') iso = new Date(posted_at).toISOString();\n  else if (typeof posted_at === 'string') iso = new Date(posted_at).toISOString();\n  return { url, text, posted_at: iso, likes: Number(likes), comments: Number(comments), image_url, type };\n}\n\nconst posts = raw\n  .filter(isOriginal)\n  .map(normalize)\n  .filter((p) => p.url && p.text)\n  .sort((a, b) => new Date(b.posted_at) - new Date(a.posted_at))\n  .slice(0, 5);\n\nconst payload = {\n  updated_at: new Date().toISOString(),\n  source: 'apify/supreme_coder/linkedin-post via n8n weekly cron',\n  profile_url: 'https://www.linkedin.com/in/alecfoster',\n  posts,\n};\n\nconst json_text = JSON.stringify(payload, null, 2) + '\\n';\nconst content_b64 = Buffer.from(json_text, 'utf-8').toString('base64');\n\nreturn [{ json: { json_text, content_b64, post_count: posts.length } }];\n"
+      }
+    },
+    {
+      "name": "GitHub: get current file SHA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/alectivism/personal-website/contents/src/data/linkedin-posts.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "GitHub PAT (website)"
+        }
+      }
+    },
+    {
+      "name": "GitHub: commit updated JSON",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "PUT",
+        "url": "https://api.github.com/repos/alectivism/personal-website/contents/src/data/linkedin-posts.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/vnd.github+json"
+            },
+            {
+              "name": "X-GitHub-Api-Version",
+              "value": "2022-11-28"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: 'data: weekly linkedin sync (' + $('Build linkedin-posts.json').first().json.post_count + ' posts)', content: $('Build linkedin-posts.json').first().json.content_b64, sha: $('GitHub: get current file SHA').first().json.sha, branch: 'main' }) }}"
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "GitHub PAT (website)"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every Sunday 6am": {
+      "main": [
+        [
+          {
+            "node": "Apify: scrape LinkedIn posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify: scrape LinkedIn posts": {
+      "main": [
+        [
+          {
+            "node": "Build linkedin-posts.json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build linkedin-posts.json": {
+      "main": [
+        [
+          {
+            "node": "GitHub: get current file SHA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GitHub: get current file SHA": {
+      "main": [
+        [
+          {
+            "node": "GitHub: commit updated JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "activeVersionId": null,
+  "versionCounter": 16,
+  "sourceWorkflowId": null,
+  "activeVersion": null
+}

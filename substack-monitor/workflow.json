@@ -1,0 +1,1065 @@
+{
+  "name": "Content Pipeline: Substack Newsletters Monitor",
+  "description": null,
+  "nodes": [
+    {
+      "name": "Mon 8am PT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        304
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 8 * * 1"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Feed Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nreturn [\n  { json: { feed_url: 'https://importai.substack.com/feed',               name: 'Import AI',              priority: 'high'   } },\n  { json: { feed_url: 'https://www.oneusefulthing.org/feed',              name: 'One Useful Thing',       priority: 'high'   } },\n  { json: { feed_url: 'https://aisnakeoil.substack.com/feed',            name: 'AI Snake Oil',           priority: 'high'   } },\n  { json: { feed_url: 'https://www.latent.space/feed',                   name: 'Latent Space',           priority: 'high'   } },\n  { json: { feed_url: 'https://www.marketingaiinstitute.com/blog/rss.xml', name: 'Marketing AI Institute', priority: 'medium' } },\n];\n"
+      }
+    },
+    {
+      "name": "Fetch RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        688,
+        304
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.feed_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/rss+xml, application/xml, text/xml, */*"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          },
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "name": "Parse RSS Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        304
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;\nconst items = $input.all();\nconst out = [];\n\nfor (const item of items) {\n  const feedName = item.json.feed_url\n    ? item.json.feed_url\n    : '';\n  // The HTTP node returns the body as 'data' or as the raw response\n  const xml = (typeof item.json.data === 'string') ? item.json.data : (item.json.body || '');\n  \n  // Parse <item> blocks via regex (no DOM parser in n8n sandbox)\n  const itemBlocks = xml.match(/<item[\\s>][\\s\\S]*?<\\/item>/gi) || [];\n  let count = 0;\n  \n  // Try to extract feed name from channel title\n  const chanTitleMatch = xml.match(/<channel>[\\s\\S]*?<title><!\\[CDATA\\[(.*?)\\]\\]><\\/title>/i)\n    || xml.match(/<channel>[\\s\\S]*?<title>(.*?)<\\/title>/i);\n  // Get feed_url and name from the pairing — we stored in the item's upstream context\n  // We need to find which feed this is. We'll use pairing index fallback.\n  \n  for (const block of itemBlocks) {\n    if (count >= 5) break;\n    \n    const titleMatch = block.match(/<title><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/title>/)\n      || block.match(/<title>([\\s\\S]*?)<\\/title>/);\n    const linkMatch = block.match(/<link>([\\s\\S]*?)<\\/link>/)\n      || block.match(/<guid[^>]*>(https?:\\/\\/[^<]+)<\\/guid>/);\n    const pubDateMatch = block.match(/<pubDate>([\\s\\S]*?)<\\/pubDate>/)\n      || block.match(/<published>([\\s\\S]*?)<\\/published>/);\n    const descMatch = block.match(/<description><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/description>/)\n      || block.match(/<description>([\\s\\S]*?)<\\/description>/);\n    const contentMatch = block.match(/<content:encoded><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/content:encoded>/)\n      || block.match(/<content:encoded>([\\s\\S]*?)<\\/content:encoded>/);\n    \n    const title = titleMatch ? titleMatch[1].trim() : '';\n    const url = linkMatch ? linkMatch[1].trim().replace(/<!\\[CDATA\\[/, '').replace(/\\]\\]>/, '') : '';\n    const pubDate = pubDateMatch ? pubDateMatch[1].trim() : '';\n    const desc = descMatch ? descMatch[1].replace(/<[^>]+>/g, '').trim() : '';\n    const content = contentMatch ? contentMatch[1].replace(/<[^>]+>/g, '').trim() : desc;\n    \n    if (!title || !url) continue;\n    \n    // Date filter\n    const ts = pubDate ? Date.parse(pubDate) : 0;\n    if (ts && ts < cutoff) continue;\n    \n    out.push({ json: {\n      title: title.substring(0, 500),\n      url: url.substring(0, 2000),\n      published_at: pubDate ? new Date(pubDate).toISOString().substring(0, 10) : '',\n      description: desc.substring(0, 500),\n      feed_name: item.json.feed_name || '',\n    }});\n    count++;\n  }\n}\n\nreturn out.length ? out : [{ json: { _empty: true } }];\n"
+      }
+    },
+    {
+      "name": "Notion: Query Existing Web",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1136,
+        304
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/aaaaaaaa-0000-4000-8000-000000000001/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"filter\": {\"and\": [{\"property\": \"Type\", \"select\": {\"equals\": \"Source\"}}, {\"property\": \"Source Type\", \"select\": {\"equals\": \"web\"}}]}, \"sorts\": [{\"property\": \"Collected At\", \"direction\": \"descending\"}], \"page_size\": 200}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    },
+    {
+      "name": "Dedup: New Articles Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        304
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst articles = $('Parse RSS Items').all().map(it => it.json).filter(a => !a._empty);\nconst existing = $input.all();\nconst existingUrls = new Set();\nfor (const e of existing) {\n  const results = (e.json.results) || [];\n  for (const page of results) {\n    const ep = (page.properties && page.properties.Episode && page.properties.Episode.rich_text) || [];\n    for (const seg of ep) {\n      const u = (seg.text && seg.text.link && seg.text.link.url) || '';\n      if (u) existingUrls.add(u);\n    }\n  }\n}\nconst newOnes = articles.filter(a => !existingUrls.has(a.url));\nreturn newOnes.length ? newOnes.map(a => ({ json: a })) : [{ json: { _empty: true } }];\n"
+      }
+    },
+    {
+      "name": "Skip If Empty",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        304
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond1",
+              "leftValue": "={{ $json._empty }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Firecrawl Scrape",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1808,
+        304
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v1/scrape",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $json.url, formats: [\"markdown\"], onlyMainContent: true }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Firecrawl API"
+        }
+      }
+    },
+    {
+      "name": "Carry Article Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2032,
+        304
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "article_url",
+              "type": "string",
+              "value": "={{ $('Dedup: New Articles Only').item.json.url }}"
+            },
+            {
+              "id": "2",
+              "name": "article_title",
+              "type": "string",
+              "value": "={{ $('Dedup: New Articles Only').item.json.title }}"
+            },
+            {
+              "id": "3",
+              "name": "article_published",
+              "type": "string",
+              "value": "={{ $('Dedup: New Articles Only').item.json.published_at }}"
+            },
+            {
+              "id": "4",
+              "name": "article_feed",
+              "type": "string",
+              "value": "={{ $('Dedup: New Articles Only').item.json.feed_name }}"
+            },
+            {
+              "id": "5",
+              "name": "article_markdown",
+              "type": "string",
+              "value": "={{ ($json.data && $json.data.markdown) ? $json.data.markdown.substring(0, 15000) : $('Dedup: New Articles Only').item.json.description }}"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Claude Extract Ideas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2256,
+        304
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-6\", max_tokens: 8000, system: [{ type: \"text\", text: \"You extract content ideas from newsletter articles for Alec Foster. Alec is Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Audience: marketers, AI practitioners, execs/CMOs, governance folks, builders. Alec's interests: Claude (all Anthropic products), Claude Code, agentic AI, AI governance, responsible AI, AI safety, AI ethics, privacy, marketing AI, advertising personalization, adtech, measurement, enterprise AI, MCP, prompt engineering, LLM evals, AI strategy for CMOs, MMA frameworks, Codex.\\n\\nYield 0-2 ideas per article only when there is substantive content Alec could amplify, counter, or build on for his LinkedIn audience. Return {\\\"ideas\\\": []} if the article is thin, off-topic, or purely promotional.\\n\\nFor each idea return: topic_headline, hook, key_points (3-5), observations (1-3), tips (0-3), quotes (1-2 verbatim from the article), hot_take_potential (High/Medium/Low), utility (High/Medium/Low), relevance (High/Medium/Low), format (Explainer/Hot Take/Listicle/Case Study/Opinion/Thread), topics (from the allowed list), audience, draft_angle, why_it_matters, further_reading.\\n\\nAllowed topics: Claude, Agents, AI Governance, Marketing AI, Measurement, AI Strategy, LLMs, MCP, Voice AI, AI Safety, Enterprise AI, Creator Economy, Policy, Research, Content, Prompt Engineering, Reddit/Search, OpenAI, Anthropic, Google, Meta, Codex.\\n\\nBanned words: Unlock, Unleash, Synergy, Uncover, Furthermore, Leverage, Landscape, Delve, Prowess, Realm, Unearth, Tapestry, Crucial, Pivotal, Revolutionary, Lifeblood, Treasure trove, Dive into, Game-changing, Cutting edge, Empower. No em-dashes.\\n\\nOutput strict JSON only: {\\\"ideas\\\": [...]} or {\\\"ideas\\\": []}.\", cache_control: { type: \"ephemeral\" } }], messages: [{ role: \"user\", content: \"Extract content ideas from this newsletter article.\\n\\nFeed: \" + ($json.article_feed || \"\") + \"\\nTitle: \" + ($json.article_title || \"\") + \"\\nPublished: \" + ($json.article_published || \"\") + \"\\nURL: \" + ($json.article_url || \"\") + \"\\n\\nARTICLE CONTENT:\\n\" + ($json.article_markdown || \"(no content scraped)\") }] }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "name": "Parse Ideas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2480,
+        304
+      ],
+      "parameters": {
+        "jsCode": "\nconst TOPIC_ALIASES = {\n  \"google gemini\": \"Google\", \"gemini\": \"Google\", \"google\": \"Google\",\n  \"chatgpt\": \"OpenAI\", \"gpt-5\": \"OpenAI\", \"gpt-4\": \"OpenAI\", \"openai\": \"OpenAI\",\n  \"anthropic\": \"Anthropic\", \"claude\": \"Claude\",\n  \"meta ai\": \"Meta\", \"llama\": \"Meta\", \"meta\": \"Meta\",\n  \"agent\": \"Agents\", \"agents\": \"Agents\", \"agentic\": \"Agents\", \"agentic ai\": \"Agents\",\n  \"governance\": \"AI Governance\", \"ai governance\": \"AI Governance\", \"responsible ai\": \"AI Governance\", \"ethics\": \"AI Governance\",\n  \"safety\": \"AI Safety\", \"ai safety\": \"AI Safety\", \"alignment\": \"AI Safety\",\n  \"policy\": \"Policy\", \"regulation\": \"Policy\", \"eu ai act\": \"Policy\",\n  \"marketing\": \"Marketing AI\", \"marketing ai\": \"Marketing AI\", \"advertising\": \"Marketing AI\", \"adtech\": \"Marketing AI\",\n  \"measurement\": \"Measurement\", \"attribution\": \"Measurement\",\n  \"strategy\": \"AI Strategy\", \"ai strategy\": \"AI Strategy\",\n  \"llm\": \"LLMs\", \"llms\": \"LLMs\", \"large language model\": \"LLMs\",\n  \"mcp\": \"MCP\", \"model context protocol\": \"MCP\",\n  \"voice\": \"Voice AI\", \"voice ai\": \"Voice AI\",\n  \"enterprise\": \"Enterprise AI\", \"enterprise ai\": \"Enterprise AI\",\n  \"creator\": \"Creator Economy\", \"creator economy\": \"Creator Economy\",\n  \"research\": \"Research\", \"paper\": \"Research\",\n  \"content\": \"Content\",\n  \"prompt\": \"Prompt Engineering\", \"prompt engineering\": \"Prompt Engineering\",\n  \"search\": \"Reddit/Search\",\n  \"codex\": \"Codex\",\n};\nconst VALID_TOPICS = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nfunction normalize(topic) {\n  const k = String(topic || '').trim().toLowerCase();\n  if (TOPIC_ALIASES[k]) return TOPIC_ALIASES[k];\n  for (const [alias, target] of Object.entries(TOPIC_ALIASES)) {\n    if (k.includes(alias)) return target;\n  }\n  return null;\n}\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  let text = '';\n  if (j.content && Array.isArray(j.content) && j.content[0]) text = j.content[0].text || '';\n  else if (typeof j.body === 'string') text = j.body;\n  else text = JSON.stringify(j);\n  text = text.replace(/^```json\\s*/i,'').replace(/```\\s*$/,'').trim();\n  let parsed;\n  try { parsed = JSON.parse(text); } catch(e) { continue; }\n  const ideas = parsed.ideas || [];\n  const ctx = $('Carry Article Context').item.json;\n  for (const idea of ideas) {\n    const merged = new Set();\n    for (const t of (idea.topics || [])) {\n      const n = normalize(t);\n      if (n && VALID_TOPICS.has(n)) merged.add(n);\n    }\n    if (!merged.size) merged.add('AI Strategy');\n    if (String(idea.relevance||'').toLowerCase()==='low' && String(idea.utility||'').toLowerCase()==='low') continue;\n    out.push({ json: {\n      topic_headline: idea.topic_headline || '',\n      hook: idea.hook || '',\n      key_points: idea.key_points || [],\n      observations: idea.observations || [],\n      tips: idea.tips || [],\n      quotes: idea.quotes || [],\n      audience: idea.audience || [],\n      hot_take_potential: idea.hot_take_potential || 'Medium',\n      utility: idea.utility || 'Medium',\n      relevance: idea.relevance || 'Medium',\n      format: idea.format || 'Explainer',\n      draft_angle: idea.draft_angle || '',\n      why_it_matters: idea.why_it_matters || '',\n      further_reading: idea.further_reading || [],\n      merged_topics: Array.from(merged),\n      feed_name: ctx.article_feed || '',\n      article_title: ctx.article_title || '',\n      article_url: ctx.article_url || '',\n      article_published: ctx.article_published || '',\n      source_type: 'web',\n      extraction_model: 'Sonnet 4.6',\n    }});\n  }\n}\nreturn out.length ? out : [{ json: { _no_ideas: true } }];\n"
+      }
+    },
+    {
+      "name": "Notion: Create Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2704,
+        304
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const ctx = $('Carry Article Context').item.json;\n  const title = (ctx.article_feed || 'Newsletter') + ' — ' + (ctx.article_title || 'Article');\n  return {\n    parent: { database_id: 'aaaaaaaa-0000-4000-8000-000000000001' },\n    properties: {\n      Title:          { title: [{ text: { content: title.substring(0, 200) } }] },\n      Type:           { select: { name: 'Source' } },\n      'Source Type':  { select: { name: 'web' } },\n      Episode:        { rich_text: [{ type: 'text', text: { content: (ctx.article_title || '').substring(0, 2000), link: ctx.article_url ? { url: ctx.article_url } : null } }] },\n      Published:      { date: { start: ctx.article_published || null } },\n      Comment:        { rich_text: [{ text: { content: ('Feed: ' + (ctx.article_feed || '') + ' | ' + (ctx.article_url || '')).substring(0, 2000) } }] }\n    }\n  };\n})()) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    },
+    {
+      "name": "Notion: Create Idea",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2928,
+        304
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const src = $('Notion: Create Source').item.json;\n  const source_page_id = src.id || '';\n  const props = {\n    Title:                { title: [{ text: { content: (j.topic_headline || 'Untitled').substring(0, 200) } }] },\n    Type:                 { select: { name: 'Idea' } },\n    'Source Type':        { select: { name: 'web' } },\n    Episode:              { rich_text: [{ type: 'text', text: { content: (j.article_title || '').substring(0, 2000), link: j.article_url ? { url: j.article_url } : null } }] },\n    Published:            { date: { start: (j.article_published || null) } },\n    'Hot Take Potential': { select: { name: j.hot_take_potential || 'Medium' } },\n    Utility:              { select: { name: j.utility || 'Medium' } },\n    Relevance:            { select: { name: j.relevance || 'Medium' } },\n    Format:               { select: { name: j.format || 'Explainer' } },\n    Topics:               { multi_select: (j.merged_topics || []).map(t => ({ name: t })) },\n    Audience:             { multi_select: (j.audience || []).map(a => ({ name: a })) },\n    Summary:              { rich_text: [{ text: { content: (j.hook || '').substring(0, 2000) } }] },\n    'Extraction Model':   { select: { name: 'Sonnet 4.6' } },\n    'Transcript Source':  { select: { name: 'Firecrawl' } },\n    'Episode Source':     source_page_id ? { relation: [{ id: source_page_id }] } : { relation: [] }\n  };\n  const children = [\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Hook' } }] } },\n    { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: (j.hook || '').substring(0, 2000) } }] } },\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Draft Angle' } }] } },\n    { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: (j.draft_angle || '').substring(0, 2000) } }] } },\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Key Points' } }] } },\n    ...(j.key_points || []).map(p => ({ object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ type: 'text', text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Observations' } }] } },\n    ...(j.observations || []).map(p => ({ object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ type: 'text', text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Quotes' } }] } },\n    ...(j.quotes || []).map(q => ({ object: 'block', type: 'quote', quote: { rich_text: [{ type: 'text', text: { content: ('\"' + (q.quote || q.text || q) + '\"').substring(0, 2000) } }] } })),\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Why It Matters' } }] } },\n    { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: (j.why_it_matters || '').substring(0, 2000) } }] } },\n  ];\n  return { parent: { database_id: 'aaaaaaaa-0000-4000-8000-000000000001' }, properties: props, children };\n})()) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Mon 8am PT": {
+      "main": [
+        [
+          {
+            "node": "Feed Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feed Config": {
+      "main": [
+        [
+          {
+            "node": "Fetch RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch RSS": {
+      "main": [
+        [
+          {
+            "node": "Parse RSS Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse RSS Items": {
+      "main": [
+        [
+          {
+            "node": "Notion: Query Existing Web",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Query Existing Web": {
+      "main": [
+        [
+          {
+            "node": "Dedup: New Articles Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup: New Articles Only": {
+      "main": [
+        [
+          {
+            "node": "Skip If Empty",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip If Empty": {
+      "main": [
+        [
+          {
+            "node": "Firecrawl Scrape",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Firecrawl Scrape": {
+      "main": [
+        [
+          {
+            "node": "Carry Article Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carry Article Context": {
+      "main": [
+        [
+          {
+            "node": "Claude Extract Ideas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Extract Ideas": {
+      "main": [
+        [
+          {
+            "node": "Parse Ideas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Ideas": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Create Source": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create Idea",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "HrwcI5OK2E2EZ8PV",
+    "saveDataErrorExecution": "all"
+  },
+  "nodeGroups": [],
+  "activeVersionId": "aaaaaaaa-0000-4000-8000-000000000082",
+  "versionCounter": 10,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-04-26T16:00:13.997Z",
+    "createdAt": "2026-04-26T16:00:13.997Z",
+    "versionId": "aaaaaaaa-0000-4000-8000-000000000082",
+    "workflowId": "k2UWOrNxTcloKJrt",
+    "nodes": [
+      {
+        "name": "Mon 8am PT",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          240,
+          304
+        ],
+        "id": "node-sched-01",
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 0 8 * * 1"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "Feed Config",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          464,
+          304
+        ],
+        "id": "node-feed-config-01",
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "\nreturn [\n  { json: { feed_url: 'https://importai.substack.com/feed',               name: 'Import AI',              priority: 'high'   } },\n  { json: { feed_url: 'https://www.oneusefulthing.org/feed',              name: 'One Useful Thing',       priority: 'high'   } },\n  { json: { feed_url: 'https://aisnakeoil.substack.com/feed',            name: 'AI Snake Oil',           priority: 'high'   } },\n  { json: { feed_url: 'https://www.latent.space/feed',                   name: 'Latent Space',           priority: 'high'   } },\n  { json: { feed_url: 'https://www.marketingaiinstitute.com/blog/rss.xml', name: 'Marketing AI Institute', priority: 'medium' } },\n];\n"
+        }
+      },
+      {
+        "name": "Fetch RSS",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          688,
+          304
+        ],
+        "id": "node-fetch-rss-01",
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $json.feed_url }}",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Accept",
+                "value": "application/rss+xml, application/xml, text/xml, */*"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "text"
+              }
+            },
+            "timeout": 30000
+          }
+        }
+      },
+      {
+        "name": "Parse RSS Items",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          912,
+          304
+        ],
+        "id": "node-parse-rss-01",
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "\nconst cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;\nconst items = $input.all();\nconst out = [];\n\nfor (const item of items) {\n  const feedName = item.json.feed_url\n    ? item.json.feed_url\n    : '';\n  // The HTTP node returns the body as 'data' or as the raw response\n  const xml = (typeof item.json.data === 'string') ? item.json.data : (item.json.body || '');\n  \n  // Parse <item> blocks via regex (no DOM parser in n8n sandbox)\n  const itemBlocks = xml.match(/<item[\\s>][\\s\\S]*?<\\/item>/gi) || [];\n  let count = 0;\n  \n  // Try to extract feed name from channel title\n  const chanTitleMatch = xml.match(/<channel>[\\s\\S]*?<title><!\\[CDATA\\[(.*?)\\]\\]><\\/title>/i)\n    || xml.match(/<channel>[\\s\\S]*?<title>(.*?)<\\/title>/i);\n  // Get feed_url and name from the pairing — we stored in the item's upstream context\n  // We need to find which feed this is. We'll use pairing index fallback.\n  \n  for (const block of itemBlocks) {\n    if (count >= 5) break;\n    \n    const titleMatch = block.match(/<title><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/title>/)\n      || block.match(/<title>([\\s\\S]*?)<\\/title>/);\n    const linkMatch = block.match(/<link>([\\s\\S]*?)<\\/link>/)\n      || block.match(/<guid[^>]*>(https?:\\/\\/[^<]+)<\\/guid>/);\n    const pubDateMatch = block.match(/<pubDate>([\\s\\S]*?)<\\/pubDate>/)\n      || block.match(/<published>([\\s\\S]*?)<\\/published>/);\n    const descMatch = block.match(/<description><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/description>/)\n      || block.match(/<description>([\\s\\S]*?)<\\/description>/);\n    const contentMatch = block.match(/<content:encoded><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/content:encoded>/)\n      || block.match(/<content:encoded>([\\s\\S]*?)<\\/content:encoded>/);\n    \n    const title = titleMatch ? titleMatch[1].trim() : '';\n    const url = linkMatch ? linkMatch[1].trim().replace(/<!\\[CDATA\\[/, '').replace(/\\]\\]>/, '') : '';\n    const pubDate = pubDateMatch ? pubDateMatch[1].trim() : '';\n    const desc = descMatch ? descMatch[1].replace(/<[^>]+>/g, '').trim() : '';\n    const content = contentMatch ? contentMatch[1].replace(/<[^>]+>/g, '').trim() : desc;\n    \n    if (!title || !url) continue;\n    \n    // Date filter\n    const ts = pubDate ? Date.parse(pubDate) : 0;\n    if (ts && ts < cutoff) continue;\n    \n    out.push({ json: {\n      title: title.substring(0, 500),\n      url: url.substring(0, 2000),\n      published_at: pubDate ? new Date(pubDate).toISOString().substring(0, 10) : '',\n      description: desc.substring(0, 500),\n      feed_name: item.json.feed_name || '',\n    }});\n    count++;\n  }\n}\n\nreturn out.length ? out : [{ json: { _empty: true } }];\n"
+        }
+      },
+      {
+        "name": "Notion: Query Existing Web",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1136,
+          304
+        ],
+        "id": "node-notion-query-01",
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/databases/aaaaaaaa-0000-4000-8000-000000000001/query",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{\"filter\": {\"and\": [{\"property\": \"Type\", \"select\": {\"equals\": \"Source\"}}, {\"property\": \"Source Type\", \"select\": {\"equals\": \"web\"}}]}, \"sorts\": [{\"property\": \"Collected At\", \"direction\": \"descending\"}], \"page_size\": 200}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      },
+      {
+        "name": "Dedup: New Articles Only",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1360,
+          304
+        ],
+        "id": "node-dedup-01",
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "\nconst articles = $('Parse RSS Items').all().map(it => it.json).filter(a => !a._empty);\nconst existing = $input.all();\nconst existingUrls = new Set();\nfor (const e of existing) {\n  const results = (e.json.results) || [];\n  for (const page of results) {\n    const ep = (page.properties && page.properties.Episode && page.properties.Episode.rich_text) || [];\n    for (const seg of ep) {\n      const u = (seg.text && seg.text.link && seg.text.link.url) || '';\n      if (u) existingUrls.add(u);\n    }\n  }\n}\nconst newOnes = articles.filter(a => !existingUrls.has(a.url));\nreturn newOnes.length ? newOnes.map(a => ({ json: a })) : [{ json: { _empty: true } }];\n"
+        }
+      },
+      {
+        "name": "Skip If Empty",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1584,
+          304
+        ],
+        "id": "node-if-empty-01",
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "cond1",
+                "leftValue": "={{ $json._empty }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "notEquals"
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        }
+      },
+      {
+        "name": "Firecrawl Scrape",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1808,
+          304
+        ],
+        "id": "node-firecrawl-01",
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.firecrawl.dev/v1/scrape",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ url: $json.url, formats: [\"markdown\"], onlyMainContent: true }) }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "AiR3xnA54BebUcEp",
+            "name": "Firecrawl API"
+          }
+        }
+      },
+      {
+        "name": "Carry Article Context",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          2032,
+          304
+        ],
+        "id": "node-carry-ctx-01",
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "article_url",
+                "type": "string",
+                "value": "={{ $('Dedup: New Articles Only').item.json.url }}"
+              },
+              {
+                "id": "2",
+                "name": "article_title",
+                "type": "string",
+                "value": "={{ $('Dedup: New Articles Only').item.json.title }}"
+              },
+              {
+                "id": "3",
+                "name": "article_published",
+                "type": "string",
+                "value": "={{ $('Dedup: New Articles Only').item.json.published_at }}"
+              },
+              {
+                "id": "4",
+                "name": "article_feed",
+                "type": "string",
+                "value": "={{ $('Dedup: New Articles Only').item.json.feed_name }}"
+              },
+              {
+                "id": "5",
+                "name": "article_markdown",
+                "type": "string",
+                "value": "={{ ($json.data && $json.data.markdown) ? $json.data.markdown.substring(0, 15000) : $('Dedup: New Articles Only').item.json.description }}"
+              }
+            ]
+          },
+          "options": {}
+        }
+      },
+      {
+        "name": "Claude Extract Ideas",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2256,
+          304
+        ],
+        "id": "node-claude-01",
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-6\", max_tokens: 8000, system: [{ type: \"text\", text: \"You extract content ideas from newsletter articles for Alec Foster. Alec is Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Audience: marketers, AI practitioners, execs/CMOs, governance folks, builders. Alec's interests: Claude (all Anthropic products), Claude Code, agentic AI, AI governance, responsible AI, AI safety, AI ethics, privacy, marketing AI, advertising personalization, adtech, measurement, enterprise AI, MCP, prompt engineering, LLM evals, AI strategy for CMOs, MMA frameworks, Codex.\\n\\nYield 0-2 ideas per article only when there is substantive content Alec could amplify, counter, or build on for his LinkedIn audience. Return {\\\"ideas\\\": []} if the article is thin, off-topic, or purely promotional.\\n\\nFor each idea return: topic_headline, hook, key_points (3-5), observations (1-3), tips (0-3), quotes (1-2 verbatim from the article), hot_take_potential (High/Medium/Low), utility (High/Medium/Low), relevance (High/Medium/Low), format (Explainer/Hot Take/Listicle/Case Study/Opinion/Thread), topics (from the allowed list), audience, draft_angle, why_it_matters, further_reading.\\n\\nAllowed topics: Claude, Agents, AI Governance, Marketing AI, Measurement, AI Strategy, LLMs, MCP, Voice AI, AI Safety, Enterprise AI, Creator Economy, Policy, Research, Content, Prompt Engineering, Reddit/Search, OpenAI, Anthropic, Google, Meta, Codex.\\n\\nBanned words: Unlock, Unleash, Synergy, Uncover, Furthermore, Leverage, Landscape, Delve, Prowess, Realm, Unearth, Tapestry, Crucial, Pivotal, Revolutionary, Lifeblood, Treasure trove, Dive into, Game-changing, Cutting edge, Empower. No em-dashes.\\n\\nOutput strict JSON only: {\\\"ideas\\\": [...]} or {\\\"ideas\\\": []}.\", cache_control: { type: \"ephemeral\" } }], messages: [{ role: \"user\", content: \"Extract content ideas from this newsletter article.\\n\\nFeed: \" + ($json.article_feed || \"\") + \"\\nTitle: \" + ($json.article_title || \"\") + \"\\nPublished: \" + ($json.article_published || \"\") + \"\\nURL: \" + ($json.article_url || \"\") + \"\\n\\nARTICLE CONTENT:\\n\" + ($json.article_markdown || \"(no content scraped)\") }] }) }}",
+          "options": {
+            "timeout": 180000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "hrJsx0jwWYoqTin3",
+            "name": "Anthropic API"
+          }
+        }
+      },
+      {
+        "name": "Parse Ideas",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2480,
+          304
+        ],
+        "id": "node-parse-ideas-01",
+        "parameters": {
+          "jsCode": "\nconst TOPIC_ALIASES = {\n  \"google gemini\": \"Google\", \"gemini\": \"Google\", \"google\": \"Google\",\n  \"chatgpt\": \"OpenAI\", \"gpt-5\": \"OpenAI\", \"gpt-4\": \"OpenAI\", \"openai\": \"OpenAI\",\n  \"anthropic\": \"Anthropic\", \"claude\": \"Claude\",\n  \"meta ai\": \"Meta\", \"llama\": \"Meta\", \"meta\": \"Meta\",\n  \"agent\": \"Agents\", \"agents\": \"Agents\", \"agentic\": \"Agents\", \"agentic ai\": \"Agents\",\n  \"governance\": \"AI Governance\", \"ai governance\": \"AI Governance\", \"responsible ai\": \"AI Governance\", \"ethics\": \"AI Governance\",\n  \"safety\": \"AI Safety\", \"ai safety\": \"AI Safety\", \"alignment\": \"AI Safety\",\n  \"policy\": \"Policy\", \"regulation\": \"Policy\", \"eu ai act\": \"Policy\",\n  \"marketing\": \"Marketing AI\", \"marketing ai\": \"Marketing AI\", \"advertising\": \"Marketing AI\", \"adtech\": \"Marketing AI\",\n  \"measurement\": \"Measurement\", \"attribution\": \"Measurement\",\n  \"strategy\": \"AI Strategy\", \"ai strategy\": \"AI Strategy\",\n  \"llm\": \"LLMs\", \"llms\": \"LLMs\", \"large language model\": \"LLMs\",\n  \"mcp\": \"MCP\", \"model context protocol\": \"MCP\",\n  \"voice\": \"Voice AI\", \"voice ai\": \"Voice AI\",\n  \"enterprise\": \"Enterprise AI\", \"enterprise ai\": \"Enterprise AI\",\n  \"creator\": \"Creator Economy\", \"creator economy\": \"Creator Economy\",\n  \"research\": \"Research\", \"paper\": \"Research\",\n  \"content\": \"Content\",\n  \"prompt\": \"Prompt Engineering\", \"prompt engineering\": \"Prompt Engineering\",\n  \"search\": \"Reddit/Search\",\n  \"codex\": \"Codex\",\n};\nconst VALID_TOPICS = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nfunction normalize(topic) {\n  const k = String(topic || '').trim().toLowerCase();\n  if (TOPIC_ALIASES[k]) return TOPIC_ALIASES[k];\n  for (const [alias, target] of Object.entries(TOPIC_ALIASES)) {\n    if (k.includes(alias)) return target;\n  }\n  return null;\n}\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  let text = '';\n  if (j.content && Array.isArray(j.content) && j.content[0]) text = j.content[0].text || '';\n  else if (typeof j.body === 'string') text = j.body;\n  else text = JSON.stringify(j);\n  text = text.replace(/^```json\\s*/i,'').replace(/```\\s*$/,'').trim();\n  let parsed;\n  try { parsed = JSON.parse(text); } catch(e) { continue; }\n  const ideas = parsed.ideas || [];\n  const ctx = $('Carry Article Context').item.json;\n  for (const idea of ideas) {\n    const merged = new Set();\n    for (const t of (idea.topics || [])) {\n      const n = normalize(t);\n      if (n && VALID_TOPICS.has(n)) merged.add(n);\n    }\n    if (!merged.size) merged.add('AI Strategy');\n    if (String(idea.relevance||'').toLowerCase()==='low' && String(idea.utility||'').toLowerCase()==='low') continue;\n    out.push({ json: {\n      topic_headline: idea.topic_headline || '',\n      hook: idea.hook || '',\n      key_points: idea.key_points || [],\n      observations: idea.observations || [],\n      tips: idea.tips || [],\n      quotes: idea.quotes || [],\n      audience: idea.audience || [],\n      hot_take_potential: idea.hot_take_potential || 'Medium',\n      utility: idea.utility || 'Medium',\n      relevance: idea.relevance || 'Medium',\n      format: idea.format || 'Explainer',\n      draft_angle: idea.draft_angle || '',\n      why_it_matters: idea.why_it_matters || '',\n      further_reading: idea.further_reading || [],\n      merged_topics: Array.from(merged),\n      feed_name: ctx.article_feed || '',\n      article_title: ctx.article_title || '',\n      article_url: ctx.article_url || '',\n      article_published: ctx.article_published || '',\n      source_type: 'web',\n      extraction_model: 'Sonnet 4.6',\n    }});\n  }\n}\nreturn out.length ? out : [{ json: { _no_ideas: true } }];\n"
+        }
+      },
+      {
+        "name": "Notion: Create Source",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2704,
+          304
+        ],
+        "id": "node-notion-src-01",
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const ctx = $('Carry Article Context').item.json;\n  const title = (ctx.article_feed || 'Newsletter') + ' — ' + (ctx.article_title || 'Article');\n  return {\n    parent: { database_id: 'aaaaaaaa-0000-4000-8000-000000000001' },\n    properties: {\n      Title:          { title: [{ text: { content: title.substring(0, 200) } }] },\n      Type:           { select: { name: 'Source' } },\n      'Source Type':  { select: { name: 'web' } },\n      Episode:        { rich_text: [{ type: 'text', text: { content: (ctx.article_title || '').substring(0, 2000), link: ctx.article_url ? { url: ctx.article_url } : null } }] },\n      Published:      { date: { start: ctx.article_published || null } },\n      Comment:        { rich_text: [{ text: { content: ('Feed: ' + (ctx.article_feed || '') + ' | ' + (ctx.article_url || '')).substring(0, 2000) } }] }\n    }\n  };\n})()) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      },
+      {
+        "name": "Notion: Create Idea",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2928,
+          304
+        ],
+        "id": "node-notion-idea-01",
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const src = $('Notion: Create Source').item.json;\n  const source_page_id = src.id || '';\n  const props = {\n    Title:                { title: [{ text: { content: (j.topic_headline || 'Untitled').substring(0, 200) } }] },\n    Type:                 { select: { name: 'Idea' } },\n    'Source Type':        { select: { name: 'web' } },\n    Episode:              { rich_text: [{ type: 'text', text: { content: (j.article_title || '').substring(0, 2000), link: j.article_url ? { url: j.article_url } : null } }] },\n    Published:            { date: { start: (j.article_published || null) } },\n    'Hot Take Potential': { select: { name: j.hot_take_potential || 'Medium' } },\n    Utility:              { select: { name: j.utility || 'Medium' } },\n    Relevance:            { select: { name: j.relevance || 'Medium' } },\n    Format:               { select: { name: j.format || 'Explainer' } },\n    Topics:               { multi_select: (j.merged_topics || []).map(t => ({ name: t })) },\n    Audience:             { multi_select: (j.audience || []).map(a => ({ name: a })) },\n    Summary:              { rich_text: [{ text: { content: (j.hook || '').substring(0, 2000) } }] },\n    'Extraction Model':   { select: { name: 'Sonnet 4.6' } },\n    'Transcript Source':  { select: { name: 'Firecrawl' } },\n    'Episode Source':     source_page_id ? { relation: [{ id: source_page_id }] } : { relation: [] }\n  };\n  const children = [\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Hook' } }] } },\n    { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: (j.hook || '').substring(0, 2000) } }] } },\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Draft Angle' } }] } },\n    { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: (j.draft_angle || '').substring(0, 2000) } }] } },\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Key Points' } }] } },\n    ...(j.key_points || []).map(p => ({ object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ type: 'text', text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Observations' } }] } },\n    ...(j.observations || []).map(p => ({ object: 'block', type: 'bulleted_list_item', bulleted_list_item: { rich_text: [{ type: 'text', text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Quotes' } }] } },\n    ...(j.quotes || []).map(q => ({ object: 'block', type: 'quote', quote: { rich_text: [{ type: 'text', text: { content: ('\"' + (q.quote || q.text || q) + '\"').substring(0, 2000) } }] } })),\n    { object: 'block', type: 'heading_2', heading_2: { rich_text: [{ type: 'text', text: { content: 'Why It Matters' } }] } },\n    { object: 'block', type: 'paragraph', paragraph: { rich_text: [{ type: 'text', text: { content: (j.why_it_matters || '').substring(0, 2000) } }] } },\n  ];\n  return { parent: { database_id: 'aaaaaaaa-0000-4000-8000-000000000001' }, properties: props, children };\n})()) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Mon 8am PT": {
+        "main": [
+          [
+            {
+              "node": "Feed Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Feed Config": {
+        "main": [
+          [
+            {
+              "node": "Fetch RSS",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch RSS": {
+        "main": [
+          [
+            {
+              "node": "Parse RSS Items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse RSS Items": {
+        "main": [
+          [
+            {
+              "node": "Notion: Query Existing Web",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notion: Query Existing Web": {
+        "main": [
+          [
+            {
+              "node": "Dedup: New Articles Only",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Dedup: New Articles Only": {
+        "main": [
+          [
+            {
+              "node": "Skip If Empty",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Skip If Empty": {
+        "main": [
+          [
+            {
+              "node": "Firecrawl Scrape",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Firecrawl Scrape": {
+        "main": [
+          [
+            {
+              "node": "Carry Article Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Carry Article Context": {
+        "main": [
+          [
+            {
+              "node": "Claude Extract Ideas",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Extract Ideas": {
+        "main": [
+          [
+            {
+              "node": "Parse Ideas",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Ideas": {
+        "main": [
+          [
+            {
+              "node": "Notion: Create Source",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notion: Create Source": {
+        "main": [
+          [
+            {
+              "node": "Notion: Create Idea",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Alec Foster",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-26T16:00:14.385Z",
+        "id": 160,
+        "workflowId": "k2UWOrNxTcloKJrt",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000082",
+        "event": "activated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      }
+    ]
+  }
+}

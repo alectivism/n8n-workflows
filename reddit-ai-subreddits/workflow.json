@@ -1,0 +1,1014 @@
+{
+  "name": "Content Pipeline: Reddit AI Subreddits Monitor",
+  "description": null,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 9 * * 5"
+            }
+          ]
+        }
+      },
+      "name": "Fri 9am PT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Subreddits to monitor. always_relevant=true skips keyword filter. min_score is no longer used (top-of-week is its own filter).\nreturn [\n  // Claude / Anthropic ecosystem\n  { json: { subreddit: 'ClaudeAI',     always_relevant: true,  default_topics: ['Claude'],            priority: 'high' } },\n  { json: { subreddit: 'Anthropic',    always_relevant: true,  default_topics: ['Anthropic'],         priority: 'high' } },\n  { json: { subreddit: 'ClaudeCode',   always_relevant: true,  default_topics: ['Claude', 'Agents'],  priority: 'high' } },\n  { json: { subreddit: 'ClaudeCowork', always_relevant: true,  default_topics: ['Claude', 'Agents'],  priority: 'high' } },\n  { json: { subreddit: 'claudeskills', always_relevant: true,  default_topics: ['Claude', 'Agents'],  priority: 'high' } },\n  // Vibecoding / agent dev\n  { json: { subreddit: 'vibecoding',    always_relevant: true, default_topics: ['Agents'],            priority: 'high' } },\n  { json: { subreddit: 'AskVibecoders', always_relevant: true, default_topics: ['Agents'],            priority: 'medium' } },\n  { json: { subreddit: 'VibeCodeCamp',  always_relevant: true, default_topics: ['Agents'],            priority: 'medium' } },\n  // MCP & Codex\n  { json: { subreddit: 'mcp',   always_relevant: true,  default_topics: ['MCP'],   priority: 'high' } },\n  { json: { subreddit: 'Codex', always_relevant: true,  default_topics: ['Codex'], priority: 'high' } },\n  // Broader AI (keyword-filtered)\n  { json: { subreddit: 'MachineLearning', always_relevant: false, default_topics: ['Research'],     priority: 'medium' } },\n  { json: { subreddit: 'OpenAI',          always_relevant: false, default_topics: ['OpenAI'],       priority: 'medium' } },\n  { json: { subreddit: 'AIMarketing',     always_relevant: true,  default_topics: ['Marketing AI'], priority: 'high' } },\n];"
+      },
+      "name": "Subreddit Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// trudax/reddit-scraper-lite returns flat post objects.\n// Build sub→config map from ALL upstream Build-Apify-Input items (one per sub).\nconst SKIP_FLAIRS = ['humor','meme','funny','shitpost','image','art','video'];\nconst KEYWORDS = ['ai','claude','gpt','agent','llm','anthropic','openai','marketing','adtech','agentic','mcp','prompt','model','governance','enterprise','codex','vibe','skill','sonnet','opus','haiku'];\n\nconst posts = $input.all().map(it => it.json);\nconst subs = $('Build Apify Input').all().map(it => it.json._sub).filter(Boolean);\nconst subMap = {};\nfor (const s of subs) {\n  subMap[s.subreddit.toLowerCase()] = s;\n}\n\nconst out = [];\nfor (const p of posts) {\n  if (!p || p.dataType !== 'post') continue;\n  if (p.over18 || p.isAd) continue;\n  if (p.isVideo) continue;\n  const subName = (p.parsedCommunityName || (p.communityName || '').replace(/^r\\//, '')).toLowerCase();\n  const sub = subMap[subName];\n  if (!sub) continue;\n  const flair = String(p.flair || '').toLowerCase();\n  if (SKIP_FLAIRS.some(f => flair.includes(f))) continue;\n  const title = (p.title || '').trim();\n  const body = (p.body || '').trim();\n  if (body.startsWith('Images:') && body.length < 200) continue;\n  if (!title) continue;\n  if (!body && title.length < 40) continue;\n  if (!sub.always_relevant) {\n    const text = (title + ' ' + body).toLowerCase();\n    if (!KEYWORDS.some(k => text.includes(k))) continue;\n  }\n  out.push({ json: {\n    reddit_id: (p.parsedId || p.id || '').replace(/^t3_/, ''),\n    title: title.substring(0, 300),\n    body: body.substring(0, 12000),\n    content_text: body || ('(link post: ' + (p.link || p.url || '') + ')'),\n    url: p.url || '',\n    subreddit: sub.subreddit,\n    author: p.username || p.author || '',\n    score: p.upVotes || p.score || 0,\n    num_comments: p.numberOfComments || 0,\n    created_at: p.createdAt || '',\n    priority: sub.priority || 'medium',\n    default_topics: sub.default_topics || [],\n  }});\n}\nreturn out;\n"
+      },
+      "name": "Parse + Filter Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/aaaaaaaa-0000-4000-8000-000000000001/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"filter\": {\"and\": [{\"property\": \"Type\", \"select\": {\"equals\": \"Source\"}}, {\"property\": \"Source Type\", \"select\": {\"equals\": \"reddit\"}}]}, \"sorts\": [{\"property\": \"Collected At\", \"direction\": \"descending\"}], \"page_size\": 100}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Notion: Query Existing Reddit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst posts = $('Parse + Filter Posts').all().map(it => it.json);\nconst existing = $input.all();\nconst existingUrls = new Set();\nfor (const e of existing) {\n  const results = (e.json.results) || [];\n  for (const page of results) {\n    const ep = (page.properties && page.properties.Episode && page.properties.Episode.rich_text) || [];\n    for (const seg of ep) {\n      const u = (seg.text && seg.text.link && seg.text.link.url) || '';\n      if (u) existingUrls.add(u);\n    }\n  }\n}\nreturn posts.filter(p => !existingUrls.has(p.url)).map(p => ({ json: p }));\n"
+      },
+      "name": "Dedup: New Posts Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const title = \"r/\" + j.subreddit + \" — \" + j.title;\n  const text = j.content_text || j.body || \"(no content)\";\n  const tChunks = [];\n  for (let i = 0; i < text.length; i += 1900) tChunks.push(text.substring(i, i + 1900));\n  if (!tChunks.length) tChunks.push(\"\");\n  const tBlocks = tChunks.slice(0, 30).map(c => ({ object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: c } }] } }));\n  return {\n    parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" },\n    properties: {\n      Title: { title: [{ text: { content: title.substring(0, 200) } }] },\n      Type: { select: { name: \"Source\" } },\n      \"Source Type\": { select: { name: \"reddit\" } },\n      Episode: { rich_text: [{ type: \"text\", text: { content: (\"r/\" + j.subreddit + \" — \" + j.title).substring(0, 2000), link: j.url ? { url: j.url } : null } }] },\n      Published: { date: { start: (j.created_at || \"\").substring(0, 10) || null } },\n      Comment: { rich_text: [{ text: { content: (\"reddit_id: \" + j.reddit_id + \" | score: \" + j.score + \" | comments: \" + j.num_comments + \" | author: \" + j.author).substring(0, 2000) } }] }\n    },\n    children: [\n      { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Post\" } }] } },\n      ...tBlocks\n    ]\n  };\n})()) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Notion: Create Reddit Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "source_page_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "id": "2",
+              "name": "_post_url",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.url }}"
+            },
+            {
+              "id": "3",
+              "name": "_post_text",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.title + '\\n\\n' + ($('Dedup: New Posts Only').item.json.body || '') }}"
+            },
+            {
+              "id": "4",
+              "name": "_subreddit",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.subreddit }}"
+            },
+            {
+              "id": "5",
+              "name": "_author",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.author }}"
+            },
+            {
+              "id": "6",
+              "name": "_score",
+              "type": "number",
+              "value": "={{ $('Dedup: New Posts Only').item.json.score }}"
+            },
+            {
+              "id": "7",
+              "name": "_created_at",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.created_at }}"
+            },
+            {
+              "id": "8",
+              "name": "_reddit_id",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.reddit_id }}"
+            },
+            {
+              "id": "9",
+              "name": "_priority",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.priority }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Carry Source Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1792,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-6\", max_tokens: 8000, system: [{ type: \"text\", text: \"You extract content ideas from Reddit posts for Alec Foster. Alec is Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Audience: marketers, AI practitioners, execs/CMOs, governance folks, builders. Alec's interests (use to score Relevance): Claude (all Anthropic products), Claude Code, agentic AI, AI governance, responsible AI, AI safety, AI ethics, privacy, marketing AI, advertising personalization, adtech, measurement, enterprise AI, MCP, prompt engineering, LLM evals, AI strategy for CMOs, MMA frameworks, Codex. Reddit posts come from communities of practitioners and enthusiasts. Many posts are anecdotal, questions, complaints, or builder show-and-tell. Yield 0-2 ideas per post only when there's substantive content Alec could amplify, counter, or build on. Return ideas: [] otherwise.\", cache_control: { type: \"ephemeral\" } }], messages: [{ role: \"user\", content: \"Extract content ideas from this Reddit post.\\n\\nSubreddit: r/\" + ($json._subreddit || \"\") + \"\\nAuthor: u/\" + ($json._author || \"\") + \"\\nScore: \" + ($json._score || 0) + \" upvotes\\nPosted: \" + ($json._created_at || \"\") + \"\\nURL: \" + ($json._post_url || \"\") + \"\\n\\nPOST:\\n\" + ($json._post_text || \"\") + \"\\n\\nFor EACH idea return: topic_headline, hook, key_points (3-5), observations (1-3), tips (0-3), quotes (1-2 verbatim, attribute to u/<author>), topics (from {Claude, Agents, AI Governance, Marketing AI, Measurement, AI Strategy, LLMs, MCP, Voice AI, AI Safety, Enterprise AI, Creator Economy, Policy, Research, Content, Prompt Engineering, Reddit/Search, OpenAI, Anthropic, Google, Meta, Codex}), audience, hot_take_potential, utility, relevance, format, draft_angle, why_it_matters, further_reading.\\n\\nBanned: Unlock, Unleash, Synergy, Uncover, Furthermore, Leverage, Landscape, Delve, Prowess, Realm, Unearth, Tapestry, Crucial, Pivotal, Revolutionary, Lifeblood, Treasure trove, Dive into, Game-changing, Cutting edge, Empower. No em-dashes.\\n\\nOutput strict JSON: {\\\"ideas\\\": [...]} or {\\\"ideas\\\": []}.\" }] }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "name": "Claude Extract Reddit Ideas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2000,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TOPIC_ALIASES = {\n  \"google gemini\": \"Google\", \"gemini\": \"Google\", \"google\": \"Google\",\n  \"chatgpt\": \"OpenAI\", \"gpt-5\": \"OpenAI\", \"gpt-4\": \"OpenAI\", \"openai\": \"OpenAI\",\n  \"anthropic\": \"Anthropic\", \"claude sonnet\": \"Claude\", \"claude opus\": \"Claude\", \"claude haiku\": \"Claude\", \"claude\": \"Claude\",\n  \"meta ai\": \"Meta\", \"llama\": \"Meta\", \"meta\": \"Meta\",\n  \"agent\": \"Agents\", \"agents\": \"Agents\", \"agentic\": \"Agents\", \"agentic ai\": \"Agents\", \"ai agent\": \"Agents\",\n  \"governance\": \"AI Governance\", \"ai governance\": \"AI Governance\", \"responsible ai\": \"AI Governance\", \"ethics\": \"AI Governance\", \"ai ethics\": \"AI Governance\",\n  \"safety\": \"AI Safety\", \"ai safety\": \"AI Safety\", \"alignment\": \"AI Safety\",\n  \"policy\": \"Policy\", \"regulation\": \"Policy\", \"regulatory\": \"Policy\", \"eu ai act\": \"Policy\",\n  \"marketing\": \"Marketing AI\", \"marketing ai\": \"Marketing AI\", \"advertising\": \"Marketing AI\", \"adtech\": \"Marketing AI\", \"personalization\": \"Marketing AI\",\n  \"measurement\": \"Measurement\", \"attribution\": \"Measurement\", \"analytics\": \"Measurement\",\n  \"strategy\": \"AI Strategy\", \"ai strategy\": \"AI Strategy\", \"enterprise strategy\": \"AI Strategy\",\n  \"llm\": \"LLMs\", \"llms\": \"LLMs\", \"large language model\": \"LLMs\", \"foundation model\": \"LLMs\",\n  \"mcp\": \"MCP\", \"model context protocol\": \"MCP\",\n  \"voice\": \"Voice AI\", \"voice ai\": \"Voice AI\", \"tts\": \"Voice AI\", \"stt\": \"Voice AI\",\n  \"enterprise\": \"Enterprise AI\", \"enterprise ai\": \"Enterprise AI\", \"b2b ai\": \"Enterprise AI\",\n  \"creator\": \"Creator Economy\", \"creator economy\": \"Creator Economy\",\n  \"research\": \"Research\", \"paper\": \"Research\", \"arxiv\": \"Research\",\n  \"content\": \"Content\",\n  \"prompt\": \"Prompt Engineering\", \"prompt engineering\": \"Prompt Engineering\", \"prompting\": \"Prompt Engineering\",\n  \"search\": \"Reddit/Search\", \"reddit\": \"Reddit/Search\", \"perplexity\": \"Reddit/Search\",\n  \"codex\": \"Codex\", \"openai codex\": \"Codex\", \"codex cli\": \"Codex\"\n};\nconst VALID_TOPICS = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nfunction normalize(topic) {\n  const k = String(topic || \"\").trim().toLowerCase();\n  if (TOPIC_ALIASES[k]) return TOPIC_ALIASES[k];\n  for (const [alias, target] of Object.entries(TOPIC_ALIASES)) {\n    if (k.includes(alias)) return target;\n  }\n  return null;\n}\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  let text = '';\n  if (j.content && Array.isArray(j.content) && j.content[0]) text = j.content[0].text || '';\n  else if (typeof j.body === 'string') text = j.body;\n  else text = JSON.stringify(j);\n  text = text.replace(/^```json\\s*/i, '').replace(/```\\s*$/, '').trim();\n  let parsed;\n  try { parsed = JSON.parse(text); } catch (e) { continue; }\n  const ideas = (parsed.ideas) || [];\n  const ctx = $('Carry Source Context').item.json;\n  for (const idea of ideas) {\n    const merged = new Set();\n    for (const t of (idea.topics || [])) {\n      const n = normalize(t);\n      if (n && VALID_TOPICS.has(n)) merged.add(n);\n    }\n    if (!merged.size) merged.add('AI Strategy');\n    if (String(idea.relevance || '').toLowerCase() === 'low' && String(idea.utility || '').toLowerCase() === 'low') continue;\n    out.push({ json: {\n      topic_headline: idea.topic_headline || '',\n      hook: idea.hook || '',\n      key_points: idea.key_points || [],\n      observations: idea.observations || [],\n      tips: idea.tips || [],\n      quotes: idea.quotes || [],\n      audience: idea.audience || [],\n      hot_take_potential: idea.hot_take_potential || 'Medium',\n      utility: idea.utility || 'Medium',\n      relevance: idea.relevance || 'Medium',\n      format: idea.format || 'Explainer',\n      draft_angle: idea.draft_angle || '',\n      why_it_matters: idea.why_it_matters || '',\n      further_reading: idea.further_reading || [],\n      merged_topics: Array.from(merged),\n      podcast_name: 'r/' + (ctx._subreddit || ''),\n      episode_title: 'Reddit post by u/' + (ctx._author || ''),\n      episode_url: ctx._post_url || '',\n      episode_published: ctx._created_at || '',\n      source_page_id: ctx.source_page_id || '',\n      source_type: 'reddit',\n      transcript_id: ctx._reddit_id || '',\n      transcript_source: 'Reddit',\n      extraction_model: 'Sonnet 4.6',\n    } });\n  }\n}\nreturn out;\n"
+      },
+      "name": "Parse Ideas + Split",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const props = {\n    Title: { title: [{ text: { content: (j.topic_headline || \"Untitled\").substring(0, 200) } }] },\n    Type: { select: { name: \"Idea\" } },\n    \"Source Type\": { select: { name: \"reddit\" } },\n    Episode: { rich_text: [{ type: \"text\", text: { content: (j.episode_title || \"\").substring(0, 2000), link: j.episode_url ? { url: j.episode_url } : null } }] },\n    Published: { date: { start: (j.episode_published || \"\").substring(0, 10) || null } },\n    \"Hot Take Potential\": { select: { name: j.hot_take_potential || \"Medium\" } },\n    Utility: { select: { name: j.utility || \"Medium\" } },\n    Relevance: { select: { name: j.relevance || \"Medium\" } },\n    Format: { select: { name: j.format || \"Explainer\" } },\n    Topics: { multi_select: (j.merged_topics || []).map(t => ({ name: t })) },\n    Audience: { multi_select: (j.audience || []).map(a => ({ name: a })) },\n    Summary: { rich_text: [{ text: { content: (j.hook || \"\").substring(0, 2000) } }] },\n    \"Extraction Model\": { select: { name: \"Sonnet 4.6\" } },\n    \"Transcript Source\": { select: { name: \"Reddit\" } },\n    \"Transcript ID\": { rich_text: [{ text: { content: (j.transcript_id || \"\").substring(0, 2000) } }] },\n    \"Episode Source\": j.source_page_id ? { relation: [{ id: j.source_page_id }] } : { relation: [] }\n  };\n  const children = [\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Hook\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.hook || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Draft Angle\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.draft_angle || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Key Points\" } }] } },\n    ...(j.key_points || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Observations\" } }] } },\n    ...(j.observations || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tips\" } }] } },\n    ...(j.tips || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Quotes\" } }] } },\n    ...(j.quotes || []).map(q => ({ object: \"block\", type: \"quote\", quote: { rich_text: [{ type: \"text\", text: { content: (\"\\\"\" + (q.quote || q.text || \"\") + \"\\\" — \" + (q.speaker || \"\")).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Why It Matters\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.why_it_matters || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Further Reading\" } }] } },\n    ...(j.further_reading || []).map(r => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(r).substring(0, 2000) } }] } }))\n  ];\n  return { parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" }, properties: props, children };\n})()) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Notion: Create Idea Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2448,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// One item per subreddit so the Apify HTTP node iterates per-sub (avoids 5-min timeout\n// on a 13-sub batched call).\nconst subs = $input.all().map(it => it.json);\nreturn subs.map(s => ({ json: {\n  startUrls: [{ url: 'https://www.reddit.com/r/' + s.subreddit + '/top/?t=week' }],\n  maxItems: 10,\n  maxPostCount: 10,\n  maxComments: 0,\n  maxCommunitiesCount: 0,\n  maxUserCount: 0,\n  scrollTimeout: 40,\n  proxy: { useApifyProxy: true },\n  _sub: s,\n}}));\n"
+      },
+      "name": "Build Apify Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ startUrls: $json.startUrls, maxItems: $json.maxItems, maxPostCount: $json.maxPostCount, maxComments: 0, maxCommunitiesCount: 0, maxUserCount: 0, scrollTimeout: 40, proxy: { useApifyProxy: true } }) }}",
+        "options": {
+          "response": {
+            "response": {}
+          },
+          "timeout": 90000
+        }
+      },
+      "name": "Apify: Reddit Top Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        304
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Apify API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Fri 9am PT": {
+      "main": [
+        [
+          {
+            "node": "Subreddit Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Subreddit Config": {
+      "main": [
+        [
+          {
+            "node": "Build Apify Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Apify Input": {
+      "main": [
+        [
+          {
+            "node": "Apify: Reddit Top Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify: Reddit Top Posts": {
+      "main": [
+        [
+          {
+            "node": "Parse + Filter Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Filter Posts": {
+      "main": [
+        [
+          {
+            "node": "Notion: Query Existing Reddit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Query Existing Reddit": {
+      "main": [
+        [
+          {
+            "node": "Dedup: New Posts Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup: New Posts Only": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create Reddit Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Create Reddit Source": {
+      "main": [
+        [
+          {
+            "node": "Carry Source Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carry Source Context": {
+      "main": [
+        [
+          {
+            "node": "Claude Extract Reddit Ideas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Extract Reddit Ideas": {
+      "main": [
+        [
+          {
+            "node": "Parse Ideas + Split",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Ideas + Split": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create Idea Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "HrwcI5OK2E2EZ8PV",
+    "saveDataErrorExecution": "all",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "activeVersionId": "aaaaaaaa-0000-4000-8000-000000000157",
+  "versionCounter": 41,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-04-26T05:37:32.179Z",
+    "createdAt": "2026-04-26T05:37:32.179Z",
+    "versionId": "aaaaaaaa-0000-4000-8000-000000000157",
+    "workflowId": "seWiYibBhqKCWwvx",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 0 9 * * 5"
+              }
+            ]
+          }
+        },
+        "name": "Fri 9am PT",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          240,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000070"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// Subreddits to monitor. always_relevant=true skips keyword filter. min_score is no longer used (top-of-week is its own filter).\nreturn [\n  // Claude / Anthropic ecosystem\n  { json: { subreddit: 'ClaudeAI',     always_relevant: true,  default_topics: ['Claude'],            priority: 'high' } },\n  { json: { subreddit: 'Anthropic',    always_relevant: true,  default_topics: ['Anthropic'],         priority: 'high' } },\n  { json: { subreddit: 'ClaudeCode',   always_relevant: true,  default_topics: ['Claude', 'Agents'],  priority: 'high' } },\n  { json: { subreddit: 'ClaudeCowork', always_relevant: true,  default_topics: ['Claude', 'Agents'],  priority: 'high' } },\n  { json: { subreddit: 'claudeskills', always_relevant: true,  default_topics: ['Claude', 'Agents'],  priority: 'high' } },\n  // Vibecoding / agent dev\n  { json: { subreddit: 'vibecoding',    always_relevant: true, default_topics: ['Agents'],            priority: 'high' } },\n  { json: { subreddit: 'AskVibecoders', always_relevant: true, default_topics: ['Agents'],            priority: 'medium' } },\n  { json: { subreddit: 'VibeCodeCamp',  always_relevant: true, default_topics: ['Agents'],            priority: 'medium' } },\n  // MCP & Codex\n  { json: { subreddit: 'mcp',   always_relevant: true,  default_topics: ['MCP'],   priority: 'high' } },\n  { json: { subreddit: 'Codex', always_relevant: true,  default_topics: ['Codex'], priority: 'high' } },\n  // Broader AI (keyword-filtered)\n  { json: { subreddit: 'MachineLearning', always_relevant: false, default_topics: ['Research'],     priority: 'medium' } },\n  { json: { subreddit: 'OpenAI',          always_relevant: false, default_topics: ['OpenAI'],       priority: 'medium' } },\n  { json: { subreddit: 'AIMarketing',     always_relevant: true,  default_topics: ['Marketing AI'], priority: 'high' } },\n];"
+        },
+        "name": "Subreddit Config",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000071"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "\n// trudax/reddit-scraper-lite returns flat post objects.\n// Build sub→config map from ALL upstream Build-Apify-Input items (one per sub).\nconst SKIP_FLAIRS = ['humor','meme','funny','shitpost','image','art','video'];\nconst KEYWORDS = ['ai','claude','gpt','agent','llm','anthropic','openai','marketing','adtech','agentic','mcp','prompt','model','governance','enterprise','codex','vibe','skill','sonnet','opus','haiku'];\n\nconst posts = $input.all().map(it => it.json);\nconst subs = $('Build Apify Input').all().map(it => it.json._sub).filter(Boolean);\nconst subMap = {};\nfor (const s of subs) {\n  subMap[s.subreddit.toLowerCase()] = s;\n}\n\nconst out = [];\nfor (const p of posts) {\n  if (!p || p.dataType !== 'post') continue;\n  if (p.over18 || p.isAd) continue;\n  if (p.isVideo) continue;\n  const subName = (p.parsedCommunityName || (p.communityName || '').replace(/^r\\//, '')).toLowerCase();\n  const sub = subMap[subName];\n  if (!sub) continue;\n  const flair = String(p.flair || '').toLowerCase();\n  if (SKIP_FLAIRS.some(f => flair.includes(f))) continue;\n  const title = (p.title || '').trim();\n  const body = (p.body || '').trim();\n  if (body.startsWith('Images:') && body.length < 200) continue;\n  if (!title) continue;\n  if (!body && title.length < 40) continue;\n  if (!sub.always_relevant) {\n    const text = (title + ' ' + body).toLowerCase();\n    if (!KEYWORDS.some(k => text.includes(k))) continue;\n  }\n  out.push({ json: {\n    reddit_id: (p.parsedId || p.id || '').replace(/^t3_/, ''),\n    title: title.substring(0, 300),\n    body: body.substring(0, 12000),\n    content_text: body || ('(link post: ' + (p.link || p.url || '') + ')'),\n    url: p.url || '',\n    subreddit: sub.subreddit,\n    author: p.username || p.author || '',\n    score: p.upVotes || p.score || 0,\n    num_comments: p.numberOfComments || 0,\n    created_at: p.createdAt || '',\n    priority: sub.priority || 'medium',\n    default_topics: sub.default_topics || [],\n  }});\n}\nreturn out;\n"
+        },
+        "name": "Parse + Filter Posts",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          900,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000072"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/databases/aaaaaaaa-0000-4000-8000-000000000001/query",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{\"filter\": {\"and\": [{\"property\": \"Type\", \"select\": {\"equals\": \"Source\"}}, {\"property\": \"Source Type\", \"select\": {\"equals\": \"reddit\"}}]}, \"sorts\": [{\"property\": \"Collected At\", \"direction\": \"descending\"}], \"page_size\": 100}",
+          "options": {
+            "timeout": 30000
+          },
+          "executeOnce": true
+        },
+        "name": "Notion: Query Existing Reddit",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1120,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000073",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "\nconst posts = $('Parse + Filter Posts').all().map(it => it.json);\nconst existing = $input.all();\nconst existingUrls = new Set();\nfor (const e of existing) {\n  const results = (e.json.results) || [];\n  for (const page of results) {\n    const ep = (page.properties && page.properties.Episode && page.properties.Episode.rich_text) || [];\n    for (const seg of ep) {\n      const u = (seg.text && seg.text.link && seg.text.link.url) || '';\n      if (u) existingUrls.add(u);\n    }\n  }\n}\nreturn posts.filter(p => !existingUrls.has(p.url)).map(p => ({ json: p }));\n"
+        },
+        "name": "Dedup: New Posts Only",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1340,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000074"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const title = \"r/\" + j.subreddit + \" — \" + j.title;\n  const text = j.content_text || j.body || \"(no content)\";\n  const tChunks = [];\n  for (let i = 0; i < text.length; i += 1900) tChunks.push(text.substring(i, i + 1900));\n  if (!tChunks.length) tChunks.push(\"\");\n  const tBlocks = tChunks.slice(0, 30).map(c => ({ object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: c } }] } }));\n  return {\n    parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" },\n    properties: {\n      Title: { title: [{ text: { content: title.substring(0, 200) } }] },\n      Type: { select: { name: \"Source\" } },\n      \"Source Type\": { select: { name: \"reddit\" } },\n      Episode: { rich_text: [{ type: \"text\", text: { content: (\"r/\" + j.subreddit + \" — \" + j.title).substring(0, 2000), link: j.url ? { url: j.url } : null } }] },\n      Published: { date: { start: (j.created_at || \"\").substring(0, 10) || null } },\n      Comment: { rich_text: [{ text: { content: (\"reddit_id: \" + j.reddit_id + \" | score: \" + j.score + \" | comments: \" + j.num_comments + \" | author: \" + j.author).substring(0, 2000) } }] }\n    },\n    children: [\n      { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Post\" } }] } },\n      ...tBlocks\n    ]\n  };\n})()) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "name": "Notion: Create Reddit Source",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1560,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000075",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "source_page_id",
+                "type": "string",
+                "value": "={{ $json.id }}"
+              },
+              {
+                "id": "2",
+                "name": "_post_url",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.url }}"
+              },
+              {
+                "id": "3",
+                "name": "_post_text",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.title + '\\n\\n' + ($('Dedup: New Posts Only').item.json.body || '') }}"
+              },
+              {
+                "id": "4",
+                "name": "_subreddit",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.subreddit }}"
+              },
+              {
+                "id": "5",
+                "name": "_author",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.author }}"
+              },
+              {
+                "id": "6",
+                "name": "_score",
+                "type": "number",
+                "value": "={{ $('Dedup: New Posts Only').item.json.score }}"
+              },
+              {
+                "id": "7",
+                "name": "_created_at",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.created_at }}"
+              },
+              {
+                "id": "8",
+                "name": "_reddit_id",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.reddit_id }}"
+              },
+              {
+                "id": "9",
+                "name": "_priority",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.priority }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "Carry Source Context",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1780,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000076"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-6\", max_tokens: 8000, system: [{ type: \"text\", text: \"You extract content ideas from Reddit posts for Alec Foster. Alec is Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Audience: marketers, AI practitioners, execs/CMOs, governance folks, builders. Alec's interests (use to score Relevance): Claude (all Anthropic products), Claude Code, agentic AI, AI governance, responsible AI, AI safety, AI ethics, privacy, marketing AI, advertising personalization, adtech, measurement, enterprise AI, MCP, prompt engineering, LLM evals, AI strategy for CMOs, MMA frameworks, Codex. Reddit posts come from communities of practitioners and enthusiasts. Many posts are anecdotal, questions, complaints, or builder show-and-tell. Yield 0-2 ideas per post only when there's substantive content Alec could amplify, counter, or build on. Return ideas: [] otherwise.\", cache_control: { type: \"ephemeral\" } }], messages: [{ role: \"user\", content: \"Extract content ideas from this Reddit post.\\n\\nSubreddit: r/\" + ($json._subreddit || \"\") + \"\\nAuthor: u/\" + ($json._author || \"\") + \"\\nScore: \" + ($json._score || 0) + \" upvotes\\nPosted: \" + ($json._created_at || \"\") + \"\\nURL: \" + ($json._post_url || \"\") + \"\\n\\nPOST:\\n\" + ($json._post_text || \"\") + \"\\n\\nFor EACH idea return: topic_headline, hook, key_points (3-5), observations (1-3), tips (0-3), quotes (1-2 verbatim, attribute to u/<author>), topics (from {Claude, Agents, AI Governance, Marketing AI, Measurement, AI Strategy, LLMs, MCP, Voice AI, AI Safety, Enterprise AI, Creator Economy, Policy, Research, Content, Prompt Engineering, Reddit/Search, OpenAI, Anthropic, Google, Meta, Codex}), audience, hot_take_potential, utility, relevance, format, draft_angle, why_it_matters, further_reading.\\n\\nBanned: Unlock, Unleash, Synergy, Uncover, Furthermore, Leverage, Landscape, Delve, Prowess, Realm, Unearth, Tapestry, Crucial, Pivotal, Revolutionary, Lifeblood, Treasure trove, Dive into, Game-changing, Cutting edge, Empower. No em-dashes.\\n\\nOutput strict JSON: {\\\"ideas\\\": [...]} or {\\\"ideas\\\": []}.\" }] }) }}",
+          "options": {
+            "timeout": 180000
+          }
+        },
+        "name": "Claude Extract Reddit Ideas",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2000,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000077",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "hrJsx0jwWYoqTin3",
+            "name": "Anthropic API"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "\nconst TOPIC_ALIASES = {\n  \"google gemini\": \"Google\", \"gemini\": \"Google\", \"google\": \"Google\",\n  \"chatgpt\": \"OpenAI\", \"gpt-5\": \"OpenAI\", \"gpt-4\": \"OpenAI\", \"openai\": \"OpenAI\",\n  \"anthropic\": \"Anthropic\", \"claude sonnet\": \"Claude\", \"claude opus\": \"Claude\", \"claude haiku\": \"Claude\", \"claude\": \"Claude\",\n  \"meta ai\": \"Meta\", \"llama\": \"Meta\", \"meta\": \"Meta\",\n  \"agent\": \"Agents\", \"agents\": \"Agents\", \"agentic\": \"Agents\", \"agentic ai\": \"Agents\", \"ai agent\": \"Agents\",\n  \"governance\": \"AI Governance\", \"ai governance\": \"AI Governance\", \"responsible ai\": \"AI Governance\", \"ethics\": \"AI Governance\", \"ai ethics\": \"AI Governance\",\n  \"safety\": \"AI Safety\", \"ai safety\": \"AI Safety\", \"alignment\": \"AI Safety\",\n  \"policy\": \"Policy\", \"regulation\": \"Policy\", \"regulatory\": \"Policy\", \"eu ai act\": \"Policy\",\n  \"marketing\": \"Marketing AI\", \"marketing ai\": \"Marketing AI\", \"advertising\": \"Marketing AI\", \"adtech\": \"Marketing AI\", \"personalization\": \"Marketing AI\",\n  \"measurement\": \"Measurement\", \"attribution\": \"Measurement\", \"analytics\": \"Measurement\",\n  \"strategy\": \"AI Strategy\", \"ai strategy\": \"AI Strategy\", \"enterprise strategy\": \"AI Strategy\",\n  \"llm\": \"LLMs\", \"llms\": \"LLMs\", \"large language model\": \"LLMs\", \"foundation model\": \"LLMs\",\n  \"mcp\": \"MCP\", \"model context protocol\": \"MCP\",\n  \"voice\": \"Voice AI\", \"voice ai\": \"Voice AI\", \"tts\": \"Voice AI\", \"stt\": \"Voice AI\",\n  \"enterprise\": \"Enterprise AI\", \"enterprise ai\": \"Enterprise AI\", \"b2b ai\": \"Enterprise AI\",\n  \"creator\": \"Creator Economy\", \"creator economy\": \"Creator Economy\",\n  \"research\": \"Research\", \"paper\": \"Research\", \"arxiv\": \"Research\",\n  \"content\": \"Content\",\n  \"prompt\": \"Prompt Engineering\", \"prompt engineering\": \"Prompt Engineering\", \"prompting\": \"Prompt Engineering\",\n  \"search\": \"Reddit/Search\", \"reddit\": \"Reddit/Search\", \"perplexity\": \"Reddit/Search\",\n  \"codex\": \"Codex\", \"openai codex\": \"Codex\", \"codex cli\": \"Codex\"\n};\nconst VALID_TOPICS = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nfunction normalize(topic) {\n  const k = String(topic || \"\").trim().toLowerCase();\n  if (TOPIC_ALIASES[k]) return TOPIC_ALIASES[k];\n  for (const [alias, target] of Object.entries(TOPIC_ALIASES)) {\n    if (k.includes(alias)) return target;\n  }\n  return null;\n}\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  let text = '';\n  if (j.content && Array.isArray(j.content) && j.content[0]) text = j.content[0].text || '';\n  else if (typeof j.body === 'string') text = j.body;\n  else text = JSON.stringify(j);\n  text = text.replace(/^```json\\s*/i, '').replace(/```\\s*$/, '').trim();\n  let parsed;\n  try { parsed = JSON.parse(text); } catch (e) { continue; }\n  const ideas = (parsed.ideas) || [];\n  const ctx = $('Carry Source Context').item.json;\n  for (const idea of ideas) {\n    const merged = new Set();\n    for (const t of (idea.topics || [])) {\n      const n = normalize(t);\n      if (n && VALID_TOPICS.has(n)) merged.add(n);\n    }\n    if (!merged.size) merged.add('AI Strategy');\n    if (String(idea.relevance || '').toLowerCase() === 'low' && String(idea.utility || '').toLowerCase() === 'low') continue;\n    out.push({ json: {\n      topic_headline: idea.topic_headline || '',\n      hook: idea.hook || '',\n      key_points: idea.key_points || [],\n      observations: idea.observations || [],\n      tips: idea.tips || [],\n      quotes: idea.quotes || [],\n      audience: idea.audience || [],\n      hot_take_potential: idea.hot_take_potential || 'Medium',\n      utility: idea.utility || 'Medium',\n      relevance: idea.relevance || 'Medium',\n      format: idea.format || 'Explainer',\n      draft_angle: idea.draft_angle || '',\n      why_it_matters: idea.why_it_matters || '',\n      further_reading: idea.further_reading || [],\n      merged_topics: Array.from(merged),\n      podcast_name: 'r/' + (ctx._subreddit || ''),\n      episode_title: 'Reddit post by u/' + (ctx._author || ''),\n      episode_url: ctx._post_url || '',\n      episode_published: ctx._created_at || '',\n      source_page_id: ctx.source_page_id || '',\n      source_type: 'reddit',\n      transcript_id: ctx._reddit_id || '',\n      transcript_source: 'Reddit',\n      extraction_model: 'Sonnet 4.6',\n    } });\n  }\n}\nreturn out;\n"
+        },
+        "name": "Parse Ideas + Split",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2220,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000078"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const props = {\n    Title: { title: [{ text: { content: (j.topic_headline || \"Untitled\").substring(0, 200) } }] },\n    Type: { select: { name: \"Idea\" } },\n    \"Source Type\": { select: { name: \"reddit\" } },\n    Episode: { rich_text: [{ type: \"text\", text: { content: (j.episode_title || \"\").substring(0, 2000), link: j.episode_url ? { url: j.episode_url } : null } }] },\n    Published: { date: { start: (j.episode_published || \"\").substring(0, 10) || null } },\n    \"Hot Take Potential\": { select: { name: j.hot_take_potential || \"Medium\" } },\n    Utility: { select: { name: j.utility || \"Medium\" } },\n    Relevance: { select: { name: j.relevance || \"Medium\" } },\n    Format: { select: { name: j.format || \"Explainer\" } },\n    Topics: { multi_select: (j.merged_topics || []).map(t => ({ name: t })) },\n    Audience: { multi_select: (j.audience || []).map(a => ({ name: a })) },\n    Summary: { rich_text: [{ text: { content: (j.hook || \"\").substring(0, 2000) } }] },\n    \"Extraction Model\": { select: { name: \"Sonnet 4.6\" } },\n    \"Transcript Source\": { select: { name: \"Reddit\" } },\n    \"Transcript ID\": { rich_text: [{ text: { content: (j.transcript_id || \"\").substring(0, 2000) } }] },\n    \"Episode Source\": j.source_page_id ? { relation: [{ id: j.source_page_id }] } : { relation: [] }\n  };\n  const children = [\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Hook\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.hook || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Draft Angle\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.draft_angle || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Key Points\" } }] } },\n    ...(j.key_points || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Observations\" } }] } },\n    ...(j.observations || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tips\" } }] } },\n    ...(j.tips || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Quotes\" } }] } },\n    ...(j.quotes || []).map(q => ({ object: \"block\", type: \"quote\", quote: { rich_text: [{ type: \"text\", text: { content: (\"\\\"\" + (q.quote || q.text || \"\") + \"\\\" — \" + (q.speaker || \"\")).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Why It Matters\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.why_it_matters || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Further Reading\" } }] } },\n    ...(j.further_reading || []).map(r => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(r).substring(0, 2000) } }] } }))\n  ];\n  return { parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" }, properties: props, children };\n})()) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "name": "Notion: Create Idea Page",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2440,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000079",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "\n// One item per subreddit so the Apify HTTP node iterates per-sub (avoids 5-min timeout\n// on a 13-sub batched call).\nconst subs = $input.all().map(it => it.json);\nreturn subs.map(s => ({ json: {\n  startUrls: [{ url: 'https://www.reddit.com/r/' + s.subreddit + '/top/?t=week' }],\n  maxItems: 10,\n  maxPostCount: 10,\n  maxComments: 0,\n  maxCommunitiesCount: 0,\n  maxUserCount: 0,\n  scrollTimeout: 40,\n  proxy: { useApifyProxy: true },\n  _sub: s,\n}}));\n"
+        },
+        "name": "Build Apify Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          680,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000080"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.apify.com/v2/acts/trudax~reddit-scraper-lite/run-sync-get-dataset-items",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ startUrls: $json.startUrls, maxItems: $json.maxItems, maxPostCount: $json.maxPostCount, maxComments: 0, maxCommunitiesCount: 0, maxUserCount: 0, scrollTimeout: 40, proxy: { useApifyProxy: true } }) }}",
+          "options": {
+            "timeout": 90000,
+            "response": {
+              "response": {
+                "neverError": false
+              }
+            }
+          }
+        },
+        "name": "Apify: Reddit Top Posts",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          900,
+          300
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "pW4TITjTSI7A6ay7",
+            "name": "Apify API"
+          }
+        },
+        "id": "aaaaaaaa-0000-4000-8000-000000000081"
+      }
+    ],
+    "connections": {
+      "Fri 9am PT": {
+        "main": [
+          [
+            {
+              "node": "Subreddit Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Subreddit Config": {
+        "main": [
+          [
+            {
+              "node": "Build Apify Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Apify Input": {
+        "main": [
+          [
+            {
+              "node": "Apify: Reddit Top Posts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apify: Reddit Top Posts": {
+        "main": [
+          [
+            {
+              "node": "Parse + Filter Posts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse + Filter Posts": {
+        "main": [
+          [
+            {
+              "node": "Notion: Query Existing Reddit",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notion: Query Existing Reddit": {
+        "main": [
+          [
+            {
+              "node": "Dedup: New Posts Only",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Dedup: New Posts Only": {
+        "main": [
+          [
+            {
+              "node": "Notion: Create Reddit Source",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notion: Create Reddit Source": {
+        "main": [
+          [
+            {
+              "node": "Carry Source Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Carry Source Context": {
+        "main": [
+          [
+            {
+              "node": "Claude Extract Reddit Ideas",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Extract Reddit Ideas": {
+        "main": [
+          [
+            {
+              "node": "Parse Ideas + Split",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Ideas + Split": {
+        "main": [
+          [
+            {
+              "node": "Notion: Create Idea Page",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Alec Foster",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-26T05:37:32.401Z",
+        "id": 155,
+        "workflowId": "seWiYibBhqKCWwvx",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000157",
+        "event": "activated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      },
+      {
+        "createdAt": "2026-04-26T06:14:45.507Z",
+        "id": 158,
+        "workflowId": "seWiYibBhqKCWwvx",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000157",
+        "event": "activated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      },
+      {
+        "createdAt": "2026-04-26T05:37:32.301Z",
+        "id": 154,
+        "workflowId": "seWiYibBhqKCWwvx",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000157",
+        "event": "deactivated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      },
+      {
+        "createdAt": "2026-04-26T06:14:45.368Z",
+        "id": 157,
+        "workflowId": "seWiYibBhqKCWwvx",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000157",
+        "event": "deactivated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      }
+    ]
+  }
+}

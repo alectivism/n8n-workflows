@@ -1,0 +1,938 @@
+{
+  "name": "Content Pipeline: LinkedIn Profile Monitor",
+  "description": null,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 8 * * 5"
+            }
+          ]
+        }
+      },
+      "name": "Fri 8am PT",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// LinkedIn profiles to monitor (Fri 8am PT). All slugs verified active 2026-04-24.\n// total_posts: how many recent posts to fetch (Apify dedups against Notion downstream).\nreturn [\n  // HIGH: prolific + strong topical alignment\n  { json: { username: 'gregstuart',     display_name: 'Greg Stuart',           total_posts: 20, tier: 'high' } },\n  { json: { username: 'oliver-patel',   display_name: 'Oliver Patel',          total_posts: 15, tier: 'high' } },\n  { json: { username: 'emollick',       display_name: 'Ethan Mollick',         total_posts: 30, tier: 'high' } },\n  { json: { username: 'alliekmiller',   display_name: 'Allie K. Miller',       total_posts: 25, tier: 'high' } },\n  { json: { username: 'kozyrkov',       display_name: 'Cassie Kozyrkov',       total_posts: 20, tier: 'high' } },\n  { json: { username: 'carolineg',      display_name: 'Caroline Giegerich',    total_posts: 15, tier: 'high' } },\n  { json: { username: 'bricechallamel', display_name: 'Brice Challamel',       total_posts: 15, tier: 'high' } },\n  // MEDIUM: lower volume or temporary noise\n  { json: { username: 'reid-blackman',  display_name: 'Reid Blackman',         total_posts: 20, tier: 'medium' } },\n  { json: { username: 'andrewyng',      display_name: 'Andrew Ng',             total_posts: 10, tier: 'medium' } },\n  // LOW: filter aggressively (mostly product launches, useful as Google/DeepMind pulse)\n  { json: { username: 'logankilpatrick', display_name: 'Logan Kilpatrick',     total_posts: 20, tier: 'low' } },\n];"
+      },
+      "name": "Profile Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apify.com/v2/acts/apimaestro~linkedin-profile-posts/run-sync-get-dataset-items",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ username: $json.username, total_posts: $json.total_posts }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "name": "Apify: Fetch Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Apify API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "\n// Apify apimaestro/linkedin-profile-posts returns ONE ITEM PER POST (190 items total for 10 profiles).\n// Each item has nested {urn:{activity_urn,...}, posted_at:{date,timestamp,...}, author:{...}, stats:{...}}\nconst TIER_BY_USERNAME = {\n  'gregstuart': 'high',\n  'oliver-patel': 'high',\n  'emollick': 'high',\n  'alliekmiller': 'high',\n  'kozyrkov': 'high',\n  'carolineg': 'high',\n  'bricechallamel': 'high',\n  'reid-blackman': 'medium',\n  'andrewyng': 'medium',\n  'logankilpatrick': 'low',\n};\nconst WINDOW_DAYS = 7;\nconst cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;\nconst items = $input.all();\nconst out = [];\nfor (const item of items) {\n  const p = item.json;\n  const text = p.text || '';\n  if (!text || text.length < 80) continue;\n  // posted_at: object {date, relative, timestamp} OR plain string\n  let timestamp = 0;\n  if (p.posted_at && typeof p.posted_at === 'object') {\n    timestamp = p.posted_at.timestamp || (p.posted_at.date ? new Date(p.posted_at.date).getTime() : 0);\n  } else if (typeof p.posted_at === 'string') {\n    timestamp = new Date(p.posted_at).getTime();\n  }\n  if (!timestamp || isNaN(timestamp) || timestamp < cutoff) continue;\n  const url = p.url || '';\n  let urn = '';\n  if (p.urn && typeof p.urn === 'object' && p.urn.activity_urn) urn = 'urn:li:activity:' + p.urn.activity_urn;\n  else if (p.full_urn) urn = p.full_urn;\n  else urn = url;\n  if (!urn) continue;\n  const author = p.author || {};\n  const author_username = author.username || '';\n  const author_name = ((author.first_name || '') + ' ' + (author.last_name || '')).trim() || author_username;\n  const stats = p.stats || {};\n  out.push({ json: {\n    urn: String(urn),\n    url: url,\n    text: text.substring(0, 12000),\n    author_username: author_username,\n    author_name: author_name,\n    author_headline: author.headline || '',\n    posted_at: new Date(timestamp).toISOString(),\n    reactions: stats.reactions || stats.likes || stats.total_reactions || 0,\n    comments: stats.comments || stats.comments_count || 0,\n    reposts: stats.reposts || stats.shares || 0,\n    tier: TIER_BY_USERNAME[author_username] || 'medium',\n  }});\n}\nreturn out;\n"
+      },
+      "name": "Parse + Filter Posts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/aaaaaaaa-0000-4000-8000-000000000001/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"filter\": {\"and\": [{\"property\": \"Type\", \"select\": {\"equals\": \"Source\"}}, {\"property\": \"Source Type\", \"select\": {\"equals\": \"linkedin\"}}]}, \"sorts\": [{\"property\": \"Collected At\", \"direction\": \"descending\"}], \"page_size\": 100}",
+        "options": {
+          "timeout": 30000
+        },
+        "executeOnce": true
+      },
+      "name": "Notion: Query Existing LinkedIn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "\n// Filter out posts already in Notion. We use the post URL embedded in the Episode rich_text link.\nconst posts = $('Parse + Filter Posts').all().map(it => it.json);\nconst existing = $input.all();\nconst existingUrns = new Set();\nconst existingUrls = new Set();\nfor (const e of existing) {\n  const results = (e.json.results) || [];\n  for (const page of results) {\n    // The Episode property is a rich_text where text[].link.url is the post URL\n    const ep = (page.properties && page.properties.Episode && page.properties.Episode.rich_text) || [];\n    for (const seg of ep) {\n      const u = (seg.text && seg.text.link && seg.text.link.url) || '';\n      if (u) existingUrls.add(u);\n    }\n    // Also check the Comment property for URN\n    const cmt = (page.properties && page.properties.Comment && page.properties.Comment.rich_text) || [];\n    for (const seg of cmt) {\n      const c = (seg.text && seg.text.content) || '';\n      const urnMatch = c.match(/urn:[\\w:]+/);\n      if (urnMatch) existingUrns.add(urnMatch[0]);\n    }\n  }\n}\nconst newPosts = posts.filter(p => !existingUrls.has(p.url) && !existingUrns.has(p.urn));\nreturn newPosts.map(p => ({ json: p }));\n"
+      },
+      "name": "Dedup: New Posts Only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const title = j.author_name + \" — LinkedIn: \" + j.text.substring(0, 60).replace(/\\s+/g, \" \").trim();\n  const tChunks = [];\n  for (let i = 0; i < j.text.length; i += 1900) tChunks.push(j.text.substring(i, i + 1900));\n  if (!tChunks.length) tChunks.push(\"\");\n  const tBlocks = tChunks.map(c => ({ object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: c } }] } }));\n  return {\n    parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" },\n    properties: {\n      Title: { title: [{ text: { content: title.substring(0, 200) } }] },\n      Type: { select: { name: \"Source\" } },\n      \"Source Type\": { select: { name: \"linkedin\" } },\n      Episode: { rich_text: [{ type: \"text\", text: { content: (\"LinkedIn — \" + j.author_name).substring(0, 2000), link: j.url ? { url: j.url } : null } }] },\n      Published: { date: { start: (j.posted_at || \"\").substring(0, 10) || null } },\n      Comment: { rich_text: [{ text: { content: (\"LinkedIn URN: \" + j.urn + \" | reactions: \" + j.reactions + \" | comments: \" + j.comments).substring(0, 2000) } }] }\n    },\n    children: [\n      { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Post Content\" } }] } },\n      ...tBlocks.slice(0, 80)\n    ]\n  };\n})()) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Notion: Create LinkedIn Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "source_page_id",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "id": "2",
+              "name": "_post_url",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.url }}"
+            },
+            {
+              "id": "3",
+              "name": "_post_text",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.text }}"
+            },
+            {
+              "id": "4",
+              "name": "_author_name",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.author_name }}"
+            },
+            {
+              "id": "5",
+              "name": "_author_username",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.author_username }}"
+            },
+            {
+              "id": "6",
+              "name": "_posted_at",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.posted_at }}"
+            },
+            {
+              "id": "7",
+              "name": "_urn",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.urn }}"
+            },
+            {
+              "id": "8",
+              "name": "_tier",
+              "type": "string",
+              "value": "={{ $('Dedup: New Posts Only').item.json.tier || 'high' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Carry Source Context",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-6\", max_tokens: 8000, system: [{ type: \"text\", text: \"You extract content ideas from LinkedIn posts for Alec Foster. Alec is Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Audience for Alec's LinkedIn: marketers, AI practitioners, execs/CMOs, governance folks, builders. Alec's interests (use to score Relevance): Claude (all Anthropic products), Claude Code, agentic AI, AI governance, responsible AI, AI safety, AI ethics, privacy, marketing AI, advertising personalization, adtech, measurement, enterprise AI, MCP, prompt engineering, LLM evals, AI strategy for CMOs, MMA frameworks (ALTT, ACE, CAP, AURA, RAIL, ARC, SIFT), Codex. Most LinkedIn posts won't yield ideas. Return ideas: [] for generic, promotional, or off-topic posts. Yield 1-2 ideas only when the post has substantive material Alec could amplify, counter, or build on.\", cache_control: { type: \"ephemeral\" } }], messages: [{ role: \"user\", content: \"Extract content ideas from this LinkedIn post.\\n\\nAuthor: \" + ($json._author_name || \"\") + \"\\nPosted: \" + ($json._posted_at || \"\") + \"\\nURL: \" + ($json._post_url || \"\") + \"\\n\\nPOST TEXT:\\n\" + ($json._post_text || \"\") + \"\\n\\nFor EACH idea return:\\n- topic_headline: punchy, specific (3-8 words)\\n- hook: 1-2 sentences setting Alec\\u0027s angle\\n- key_points: 3-5 bullets (>=15 words each, with specifics)\\n- observations: 1-3 bullets of nuance\\n- tips: 0-3 actionable takeaways\\n- quotes: 1-2 verbatim post excerpts (>=10 words each, attribute to author)\\n- topics: from {Claude, Agents, AI Governance, Marketing AI, Measurement, AI Strategy, LLMs, MCP, Voice AI, AI Safety, Enterprise AI, Creator Economy, Policy, Research, Content, Prompt Engineering, Reddit/Search, OpenAI, Anthropic, Google, Meta, Codex}\\n- audience: subset of {Marketers, Execs/CMOs, Practitioners, Governance, Builders}\\n- hot_take_potential: High|Medium|Low\\n- utility: High|Medium|Low\\n- relevance: High|Medium|Low (use Alec\\u0027s interest list above)\\n- format: Hot Take|Explainer|How-To|Framework|Announcement|Case Study\\n- draft_angle: 1 line on what Alec\\u0027s take should be\\n- why_it_matters: 1 sentence MMA context\\n- further_reading: any URLs/citations from the post\\n\\nBanned words: Unlock, Unleash, Synergy, Uncover, Furthermore, Leverage, Landscape, Delve, Prowess, Realm, Unearth, Tapestry, Crucial, Pivotal, Revolutionary, Lifeblood, Treasure trove, Dive into, Game-changing, Cutting edge, Empower.\\nNo em-dashes. Use commas, colons, periods, parentheses.\\n\\nOutput strict JSON: {\\\"ideas\\\": [...]} or {\\\"ideas\\\": []} if none.\" }] }) }}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "name": "Claude Extract LinkedIn Ideas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2000,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "\nconst TOPIC_ALIASES = {\n  \"google gemini\": \"Google\", \"gemini\": \"Google\", \"google\": \"Google\",\n  \"chatgpt\": \"OpenAI\", \"gpt-5\": \"OpenAI\", \"gpt-4\": \"OpenAI\", \"openai\": \"OpenAI\",\n  \"anthropic\": \"Anthropic\", \"claude sonnet\": \"Claude\", \"claude opus\": \"Claude\", \"claude haiku\": \"Claude\", \"claude\": \"Claude\",\n  \"meta ai\": \"Meta\", \"llama\": \"Meta\", \"meta\": \"Meta\",\n  \"agent\": \"Agents\", \"agents\": \"Agents\", \"agentic\": \"Agents\", \"agentic ai\": \"Agents\", \"ai agent\": \"Agents\",\n  \"governance\": \"AI Governance\", \"ai governance\": \"AI Governance\", \"responsible ai\": \"AI Governance\", \"ethics\": \"AI Governance\", \"ai ethics\": \"AI Governance\",\n  \"safety\": \"AI Safety\", \"ai safety\": \"AI Safety\", \"alignment\": \"AI Safety\",\n  \"policy\": \"Policy\", \"regulation\": \"Policy\", \"regulatory\": \"Policy\", \"eu ai act\": \"Policy\",\n  \"marketing\": \"Marketing AI\", \"marketing ai\": \"Marketing AI\", \"advertising\": \"Marketing AI\", \"adtech\": \"Marketing AI\", \"personalization\": \"Marketing AI\",\n  \"measurement\": \"Measurement\", \"attribution\": \"Measurement\", \"analytics\": \"Measurement\",\n  \"strategy\": \"AI Strategy\", \"ai strategy\": \"AI Strategy\", \"enterprise strategy\": \"AI Strategy\",\n  \"llm\": \"LLMs\", \"llms\": \"LLMs\", \"large language model\": \"LLMs\", \"foundation model\": \"LLMs\",\n  \"mcp\": \"MCP\", \"model context protocol\": \"MCP\",\n  \"voice\": \"Voice AI\", \"voice ai\": \"Voice AI\", \"tts\": \"Voice AI\", \"stt\": \"Voice AI\",\n  \"enterprise\": \"Enterprise AI\", \"enterprise ai\": \"Enterprise AI\", \"b2b ai\": \"Enterprise AI\",\n  \"creator\": \"Creator Economy\", \"creator economy\": \"Creator Economy\",\n  \"research\": \"Research\", \"paper\": \"Research\", \"arxiv\": \"Research\",\n  \"content\": \"Content\",\n  \"prompt\": \"Prompt Engineering\", \"prompt engineering\": \"Prompt Engineering\", \"prompting\": \"Prompt Engineering\",\n  \"search\": \"Reddit/Search\", \"reddit\": \"Reddit/Search\", \"perplexity\": \"Reddit/Search\",\n  \"codex\": \"Codex\", \"openai codex\": \"Codex\", \"codex cli\": \"Codex\"\n};\nconst VALID_TOPICS = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nfunction normalize(topic) {\n  const k = String(topic || \"\").trim().toLowerCase();\n  if (TOPIC_ALIASES[k]) return TOPIC_ALIASES[k];\n  for (const [alias, target] of Object.entries(TOPIC_ALIASES)) {\n    if (k.includes(alias)) return target;\n  }\n  return null;\n}\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  // Claude API response: content[0].text contains the JSON string\n  let text = '';\n  if (j.content && Array.isArray(j.content) && j.content[0]) text = j.content[0].text || '';\n  else if (typeof j.body === 'string') text = j.body;\n  else text = JSON.stringify(j);\n  // Strip markdown fences if present\n  text = text.replace(/^```json\\s*/i, '').replace(/```\\s*$/, '').trim();\n  let parsed;\n  try { parsed = JSON.parse(text); } catch (e) { continue; }\n  const ideas = (parsed.ideas) || [];\n  for (const idea of ideas) {\n    // Topic normalization\n    const merged = new Set();\n    for (const t of (idea.topics || [])) {\n      const n = normalize(t);\n      if (n && VALID_TOPICS.has(n)) merged.add(n);\n    }\n    // Default add from author context if no topics\n    if (!merged.size) merged.add('AI Strategy');\n    // Noise filter: drop if relevance=Low AND utility=Low\n    if (String(idea.relevance || '').toLowerCase() === 'low' && String(idea.utility || '').toLowerCase() === 'low') continue;\n    out.push({ json: {\n      topic_headline: idea.topic_headline || '',\n      hook: idea.hook || '',\n      key_points: idea.key_points || [],\n      observations: idea.observations || [],\n      tips: idea.tips || [],\n      quotes: idea.quotes || [],\n      audience: idea.audience || [],\n      hot_take_potential: idea.hot_take_potential || 'Medium',\n      utility: idea.utility || 'Medium',\n      relevance: idea.relevance || 'Medium',\n      format: idea.format || 'Explainer',\n      draft_angle: idea.draft_angle || '',\n      why_it_matters: idea.why_it_matters || '',\n      further_reading: idea.further_reading || [],\n      merged_topics: Array.from(merged),\n      podcast_name: 'LinkedIn — ' + (($(\"Carry Source Context\").item.json._author_name) || ''),\n      episode_title: 'LinkedIn post by ' + (($(\"Carry Source Context\").item.json._author_name) || ''),\n      episode_url: ($(\"Carry Source Context\").item.json._post_url) || '',\n      episode_published: ($(\"Carry Source Context\").item.json._posted_at) || '',\n      source_page_id: ($(\"Carry Source Context\").item.json.source_page_id) || '',\n      source_type: 'linkedin',\n      transcript_id: ($(\"Carry Source Context\").item.json._urn) || '',\n      transcript_source: 'LinkedIn',\n      extraction_model: 'Sonnet 4.6',\n    } });\n  }\n}\nreturn out;\n"
+      },
+      "name": "Parse Ideas + Split",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const props = {\n    Title: { title: [{ text: { content: (j.topic_headline || \"Untitled\").substring(0, 200) } }] },\n    Type: { select: { name: \"Idea\" } },\n    \"Source Type\": { select: { name: \"linkedin\" } },\n    Episode: { rich_text: [{ type: \"text\", text: { content: (j.episode_title || \"\").substring(0, 2000), link: j.episode_url ? { url: j.episode_url } : null } }] },\n    Published: { date: { start: (j.episode_published || \"\").substring(0, 10) || null } },\n    \"Hot Take Potential\": { select: { name: j.hot_take_potential || \"Medium\" } },\n    Utility: { select: { name: j.utility || \"Medium\" } },\n    Relevance: { select: { name: j.relevance || \"Medium\" } },\n    Format: { select: { name: j.format || \"Explainer\" } },\n    Topics: { multi_select: (j.merged_topics || []).map(t => ({ name: t })) },\n    Audience: { multi_select: (j.audience || []).map(a => ({ name: a })) },\n    Summary: { rich_text: [{ text: { content: (j.hook || \"\").substring(0, 2000) } }] },\n    \"Extraction Model\": { select: { name: \"Sonnet 4.6\" } },\n    \"Transcript Source\": { select: { name: \"LinkedIn\" } },\n    \"Transcript ID\": { rich_text: [{ text: { content: (j.transcript_id || \"\").substring(0, 2000) } }] },\n    \"Episode Source\": j.source_page_id ? { relation: [{ id: j.source_page_id }] } : { relation: [] }\n  };\n  const children = [\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Hook\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.hook || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Draft Angle\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.draft_angle || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Key Points\" } }] } },\n    ...(j.key_points || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Observations\" } }] } },\n    ...(j.observations || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tips\" } }] } },\n    ...(j.tips || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Quotes\" } }] } },\n    ...(j.quotes || []).map(q => ({ object: \"block\", type: \"quote\", quote: { rich_text: [{ type: \"text\", text: { content: (\"\\\"\" + (q.quote || q.text || \"\") + \"\\\" — \" + (q.speaker || \"\")).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Why It Matters\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.why_it_matters || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Further Reading\" } }] } },\n    ...(j.further_reading || []).map(r => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(r).substring(0, 2000) } }] } }))\n  ];\n  return { parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" }, properties: props, children };\n})()) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "name": "Notion: Create Idea Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2440,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Profile Config": {
+      "main": [
+        [
+          {
+            "node": "Apify: Fetch Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apify: Fetch Posts": {
+      "main": [
+        [
+          {
+            "node": "Parse + Filter Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Filter Posts": {
+      "main": [
+        [
+          {
+            "node": "Notion: Query Existing LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Query Existing LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Dedup: New Posts Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dedup: New Posts Only": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create LinkedIn Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Create LinkedIn Source": {
+      "main": [
+        [
+          {
+            "node": "Carry Source Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carry Source Context": {
+      "main": [
+        [
+          {
+            "node": "Claude Extract LinkedIn Ideas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Extract LinkedIn Ideas": {
+      "main": [
+        [
+          {
+            "node": "Parse Ideas + Split",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Ideas + Split": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create Idea Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fri 8am PT": {
+      "main": [
+        [
+          {
+            "node": "Profile Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "HrwcI5OK2E2EZ8PV",
+    "saveDataErrorExecution": "all",
+    "availableInMCP": true
+  },
+  "nodeGroups": [],
+  "activeVersionId": "aaaaaaaa-0000-4000-8000-000000000158",
+  "versionCounter": 24,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-04-25T03:05:50.005Z",
+    "createdAt": "2026-04-25T03:05:50.005Z",
+    "versionId": "aaaaaaaa-0000-4000-8000-000000000158",
+    "workflowId": "x1HZ57HtQvSPYZue",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 0 8 * * 5"
+              }
+            ]
+          }
+        },
+        "name": "Fri 8am PT",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          240,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000159"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// LinkedIn profiles to monitor (Fri 8am PT). All slugs verified active 2026-04-24.\n// total_posts: how many recent posts to fetch (Apify dedups against Notion downstream).\nreturn [\n  // HIGH: prolific + strong topical alignment\n  { json: { username: 'gregstuart',     display_name: 'Greg Stuart',           total_posts: 20, tier: 'high' } },\n  { json: { username: 'oliver-patel',   display_name: 'Oliver Patel',          total_posts: 15, tier: 'high' } },\n  { json: { username: 'emollick',       display_name: 'Ethan Mollick',         total_posts: 30, tier: 'high' } },\n  { json: { username: 'alliekmiller',   display_name: 'Allie K. Miller',       total_posts: 25, tier: 'high' } },\n  { json: { username: 'kozyrkov',       display_name: 'Cassie Kozyrkov',       total_posts: 20, tier: 'high' } },\n  { json: { username: 'carolineg',      display_name: 'Caroline Giegerich',    total_posts: 15, tier: 'high' } },\n  { json: { username: 'bricechallamel', display_name: 'Brice Challamel',       total_posts: 15, tier: 'high' } },\n  // MEDIUM: lower volume or temporary noise\n  { json: { username: 'reid-blackman',  display_name: 'Reid Blackman',         total_posts: 20, tier: 'medium' } },\n  { json: { username: 'andrewyng',      display_name: 'Andrew Ng',             total_posts: 10, tier: 'medium' } },\n  // LOW: filter aggressively (mostly product launches, useful as Google/DeepMind pulse)\n  { json: { username: 'logankilpatrick', display_name: 'Logan Kilpatrick',     total_posts: 20, tier: 'low' } },\n];"
+        },
+        "name": "Profile Config",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          460,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000160"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.apify.com/v2/acts/apimaestro~linkedin-profile-posts/run-sync-get-dataset-items",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "httpHeaderAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ username: $json.username, total_posts: $json.total_posts }) }}",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "name": "Apify: Fetch Posts",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          680,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000161",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "pW4TITjTSI7A6ay7",
+            "name": "Apify API"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "\n// Apify apimaestro/linkedin-profile-posts returns ONE ITEM PER POST (190 items total for 10 profiles).\n// Each item has nested {urn:{activity_urn,...}, posted_at:{date,timestamp,...}, author:{...}, stats:{...}}\nconst TIER_BY_USERNAME = {\n  'gregstuart': 'high',\n  'oliver-patel': 'high',\n  'emollick': 'high',\n  'alliekmiller': 'high',\n  'kozyrkov': 'high',\n  'carolineg': 'high',\n  'bricechallamel': 'high',\n  'reid-blackman': 'medium',\n  'andrewyng': 'medium',\n  'logankilpatrick': 'low',\n};\nconst WINDOW_DAYS = 7;\nconst cutoff = Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000;\nconst items = $input.all();\nconst out = [];\nfor (const item of items) {\n  const p = item.json;\n  const text = p.text || '';\n  if (!text || text.length < 80) continue;\n  // posted_at: object {date, relative, timestamp} OR plain string\n  let timestamp = 0;\n  if (p.posted_at && typeof p.posted_at === 'object') {\n    timestamp = p.posted_at.timestamp || (p.posted_at.date ? new Date(p.posted_at.date).getTime() : 0);\n  } else if (typeof p.posted_at === 'string') {\n    timestamp = new Date(p.posted_at).getTime();\n  }\n  if (!timestamp || isNaN(timestamp) || timestamp < cutoff) continue;\n  const url = p.url || '';\n  let urn = '';\n  if (p.urn && typeof p.urn === 'object' && p.urn.activity_urn) urn = 'urn:li:activity:' + p.urn.activity_urn;\n  else if (p.full_urn) urn = p.full_urn;\n  else urn = url;\n  if (!urn) continue;\n  const author = p.author || {};\n  const author_username = author.username || '';\n  const author_name = ((author.first_name || '') + ' ' + (author.last_name || '')).trim() || author_username;\n  const stats = p.stats || {};\n  out.push({ json: {\n    urn: String(urn),\n    url: url,\n    text: text.substring(0, 12000),\n    author_username: author_username,\n    author_name: author_name,\n    author_headline: author.headline || '',\n    posted_at: new Date(timestamp).toISOString(),\n    reactions: stats.reactions || stats.likes || stats.total_reactions || 0,\n    comments: stats.comments || stats.comments_count || 0,\n    reposts: stats.reposts || stats.shares || 0,\n    tier: TIER_BY_USERNAME[author_username] || 'medium',\n  }});\n}\nreturn out;\n"
+        },
+        "name": "Parse + Filter Posts",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          900,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000162"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/databases/aaaaaaaa-0000-4000-8000-000000000001/query",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "{\"filter\": {\"and\": [{\"property\": \"Type\", \"select\": {\"equals\": \"Source\"}}, {\"property\": \"Source Type\", \"select\": {\"equals\": \"linkedin\"}}]}, \"sorts\": [{\"property\": \"Collected At\", \"direction\": \"descending\"}], \"page_size\": 100}",
+          "options": {
+            "timeout": 30000
+          },
+          "executeOnce": true
+        },
+        "name": "Notion: Query Existing LinkedIn",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1120,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000163",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "\n// Filter out posts already in Notion. We use the post URL embedded in the Episode rich_text link.\nconst posts = $('Parse + Filter Posts').all().map(it => it.json);\nconst existing = $input.all();\nconst existingUrns = new Set();\nconst existingUrls = new Set();\nfor (const e of existing) {\n  const results = (e.json.results) || [];\n  for (const page of results) {\n    // The Episode property is a rich_text where text[].link.url is the post URL\n    const ep = (page.properties && page.properties.Episode && page.properties.Episode.rich_text) || [];\n    for (const seg of ep) {\n      const u = (seg.text && seg.text.link && seg.text.link.url) || '';\n      if (u) existingUrls.add(u);\n    }\n    // Also check the Comment property for URN\n    const cmt = (page.properties && page.properties.Comment && page.properties.Comment.rich_text) || [];\n    for (const seg of cmt) {\n      const c = (seg.text && seg.text.content) || '';\n      const urnMatch = c.match(/urn:[\\w:]+/);\n      if (urnMatch) existingUrns.add(urnMatch[0]);\n    }\n  }\n}\nconst newPosts = posts.filter(p => !existingUrls.has(p.url) && !existingUrns.has(p.urn));\nreturn newPosts.map(p => ({ json: p }));\n"
+        },
+        "name": "Dedup: New Posts Only",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1340,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000164"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const title = j.author_name + \" — LinkedIn: \" + j.text.substring(0, 60).replace(/\\s+/g, \" \").trim();\n  const tChunks = [];\n  for (let i = 0; i < j.text.length; i += 1900) tChunks.push(j.text.substring(i, i + 1900));\n  if (!tChunks.length) tChunks.push(\"\");\n  const tBlocks = tChunks.map(c => ({ object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: c } }] } }));\n  return {\n    parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" },\n    properties: {\n      Title: { title: [{ text: { content: title.substring(0, 200) } }] },\n      Type: { select: { name: \"Source\" } },\n      \"Source Type\": { select: { name: \"linkedin\" } },\n      Episode: { rich_text: [{ type: \"text\", text: { content: (\"LinkedIn — \" + j.author_name).substring(0, 2000), link: j.url ? { url: j.url } : null } }] },\n      Published: { date: { start: (j.posted_at || \"\").substring(0, 10) || null } },\n      Comment: { rich_text: [{ text: { content: (\"LinkedIn URN: \" + j.urn + \" | reactions: \" + j.reactions + \" | comments: \" + j.comments).substring(0, 2000) } }] }\n    },\n    children: [\n      { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Post Content\" } }] } },\n      ...tBlocks.slice(0, 80)\n    ]\n  };\n})()) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "name": "Notion: Create LinkedIn Source",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1560,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000165",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "manual",
+          "assignments": {
+            "assignments": [
+              {
+                "id": "1",
+                "name": "source_page_id",
+                "type": "string",
+                "value": "={{ $json.id }}"
+              },
+              {
+                "id": "2",
+                "name": "_post_url",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.url }}"
+              },
+              {
+                "id": "3",
+                "name": "_post_text",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.text }}"
+              },
+              {
+                "id": "4",
+                "name": "_author_name",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.author_name }}"
+              },
+              {
+                "id": "5",
+                "name": "_author_username",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.author_username }}"
+              },
+              {
+                "id": "6",
+                "name": "_posted_at",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.posted_at }}"
+              },
+              {
+                "id": "7",
+                "name": "_urn",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.urn }}"
+              },
+              {
+                "id": "8",
+                "name": "_tier",
+                "type": "string",
+                "value": "={{ $('Dedup: New Posts Only').item.json.tier || 'high' }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "name": "Carry Source Context",
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          1780,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000166"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-6\", max_tokens: 8000, system: [{ type: \"text\", text: \"You extract content ideas from LinkedIn posts for Alec Foster. Alec is Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Audience for Alec's LinkedIn: marketers, AI practitioners, execs/CMOs, governance folks, builders. Alec's interests (use to score Relevance): Claude (all Anthropic products), Claude Code, agentic AI, AI governance, responsible AI, AI safety, AI ethics, privacy, marketing AI, advertising personalization, adtech, measurement, enterprise AI, MCP, prompt engineering, LLM evals, AI strategy for CMOs, MMA frameworks (ALTT, ACE, CAP, AURA, RAIL, ARC, SIFT), Codex. Most LinkedIn posts won't yield ideas. Return ideas: [] for generic, promotional, or off-topic posts. Yield 1-2 ideas only when the post has substantive material Alec could amplify, counter, or build on.\", cache_control: { type: \"ephemeral\" } }], messages: [{ role: \"user\", content: \"Extract content ideas from this LinkedIn post.\\n\\nAuthor: \" + ($json._author_name || \"\") + \"\\nPosted: \" + ($json._posted_at || \"\") + \"\\nURL: \" + ($json._post_url || \"\") + \"\\n\\nPOST TEXT:\\n\" + ($json._post_text || \"\") + \"\\n\\nFor EACH idea return:\\n- topic_headline: punchy, specific (3-8 words)\\n- hook: 1-2 sentences setting Alec\\u0027s angle\\n- key_points: 3-5 bullets (>=15 words each, with specifics)\\n- observations: 1-3 bullets of nuance\\n- tips: 0-3 actionable takeaways\\n- quotes: 1-2 verbatim post excerpts (>=10 words each, attribute to author)\\n- topics: from {Claude, Agents, AI Governance, Marketing AI, Measurement, AI Strategy, LLMs, MCP, Voice AI, AI Safety, Enterprise AI, Creator Economy, Policy, Research, Content, Prompt Engineering, Reddit/Search, OpenAI, Anthropic, Google, Meta, Codex}\\n- audience: subset of {Marketers, Execs/CMOs, Practitioners, Governance, Builders}\\n- hot_take_potential: High|Medium|Low\\n- utility: High|Medium|Low\\n- relevance: High|Medium|Low (use Alec\\u0027s interest list above)\\n- format: Hot Take|Explainer|How-To|Framework|Announcement|Case Study\\n- draft_angle: 1 line on what Alec\\u0027s take should be\\n- why_it_matters: 1 sentence MMA context\\n- further_reading: any URLs/citations from the post\\n\\nBanned words: Unlock, Unleash, Synergy, Uncover, Furthermore, Leverage, Landscape, Delve, Prowess, Realm, Unearth, Tapestry, Crucial, Pivotal, Revolutionary, Lifeblood, Treasure trove, Dive into, Game-changing, Cutting edge, Empower.\\nNo em-dashes. Use commas, colons, periods, parentheses.\\n\\nOutput strict JSON: {\\\"ideas\\\": [...]} or {\\\"ideas\\\": []} if none.\" }] }) }}",
+          "options": {
+            "timeout": 180000
+          }
+        },
+        "name": "Claude Extract LinkedIn Ideas",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2000,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000167",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "hrJsx0jwWYoqTin3",
+            "name": "Anthropic API"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "\nconst TOPIC_ALIASES = {\n  \"google gemini\": \"Google\", \"gemini\": \"Google\", \"google\": \"Google\",\n  \"chatgpt\": \"OpenAI\", \"gpt-5\": \"OpenAI\", \"gpt-4\": \"OpenAI\", \"openai\": \"OpenAI\",\n  \"anthropic\": \"Anthropic\", \"claude sonnet\": \"Claude\", \"claude opus\": \"Claude\", \"claude haiku\": \"Claude\", \"claude\": \"Claude\",\n  \"meta ai\": \"Meta\", \"llama\": \"Meta\", \"meta\": \"Meta\",\n  \"agent\": \"Agents\", \"agents\": \"Agents\", \"agentic\": \"Agents\", \"agentic ai\": \"Agents\", \"ai agent\": \"Agents\",\n  \"governance\": \"AI Governance\", \"ai governance\": \"AI Governance\", \"responsible ai\": \"AI Governance\", \"ethics\": \"AI Governance\", \"ai ethics\": \"AI Governance\",\n  \"safety\": \"AI Safety\", \"ai safety\": \"AI Safety\", \"alignment\": \"AI Safety\",\n  \"policy\": \"Policy\", \"regulation\": \"Policy\", \"regulatory\": \"Policy\", \"eu ai act\": \"Policy\",\n  \"marketing\": \"Marketing AI\", \"marketing ai\": \"Marketing AI\", \"advertising\": \"Marketing AI\", \"adtech\": \"Marketing AI\", \"personalization\": \"Marketing AI\",\n  \"measurement\": \"Measurement\", \"attribution\": \"Measurement\", \"analytics\": \"Measurement\",\n  \"strategy\": \"AI Strategy\", \"ai strategy\": \"AI Strategy\", \"enterprise strategy\": \"AI Strategy\",\n  \"llm\": \"LLMs\", \"llms\": \"LLMs\", \"large language model\": \"LLMs\", \"foundation model\": \"LLMs\",\n  \"mcp\": \"MCP\", \"model context protocol\": \"MCP\",\n  \"voice\": \"Voice AI\", \"voice ai\": \"Voice AI\", \"tts\": \"Voice AI\", \"stt\": \"Voice AI\",\n  \"enterprise\": \"Enterprise AI\", \"enterprise ai\": \"Enterprise AI\", \"b2b ai\": \"Enterprise AI\",\n  \"creator\": \"Creator Economy\", \"creator economy\": \"Creator Economy\",\n  \"research\": \"Research\", \"paper\": \"Research\", \"arxiv\": \"Research\",\n  \"content\": \"Content\",\n  \"prompt\": \"Prompt Engineering\", \"prompt engineering\": \"Prompt Engineering\", \"prompting\": \"Prompt Engineering\",\n  \"search\": \"Reddit/Search\", \"reddit\": \"Reddit/Search\", \"perplexity\": \"Reddit/Search\",\n  \"codex\": \"Codex\", \"openai codex\": \"Codex\", \"codex cli\": \"Codex\"\n};\nconst VALID_TOPICS = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nfunction normalize(topic) {\n  const k = String(topic || \"\").trim().toLowerCase();\n  if (TOPIC_ALIASES[k]) return TOPIC_ALIASES[k];\n  for (const [alias, target] of Object.entries(TOPIC_ALIASES)) {\n    if (k.includes(alias)) return target;\n  }\n  return null;\n}\nconst out = [];\nfor (const item of $input.all()) {\n  const j = item.json;\n  // Claude API response: content[0].text contains the JSON string\n  let text = '';\n  if (j.content && Array.isArray(j.content) && j.content[0]) text = j.content[0].text || '';\n  else if (typeof j.body === 'string') text = j.body;\n  else text = JSON.stringify(j);\n  // Strip markdown fences if present\n  text = text.replace(/^```json\\s*/i, '').replace(/```\\s*$/, '').trim();\n  let parsed;\n  try { parsed = JSON.parse(text); } catch (e) { continue; }\n  const ideas = (parsed.ideas) || [];\n  for (const idea of ideas) {\n    // Topic normalization\n    const merged = new Set();\n    for (const t of (idea.topics || [])) {\n      const n = normalize(t);\n      if (n && VALID_TOPICS.has(n)) merged.add(n);\n    }\n    // Default add from author context if no topics\n    if (!merged.size) merged.add('AI Strategy');\n    // Noise filter: drop if relevance=Low AND utility=Low\n    if (String(idea.relevance || '').toLowerCase() === 'low' && String(idea.utility || '').toLowerCase() === 'low') continue;\n    out.push({ json: {\n      topic_headline: idea.topic_headline || '',\n      hook: idea.hook || '',\n      key_points: idea.key_points || [],\n      observations: idea.observations || [],\n      tips: idea.tips || [],\n      quotes: idea.quotes || [],\n      audience: idea.audience || [],\n      hot_take_potential: idea.hot_take_potential || 'Medium',\n      utility: idea.utility || 'Medium',\n      relevance: idea.relevance || 'Medium',\n      format: idea.format || 'Explainer',\n      draft_angle: idea.draft_angle || '',\n      why_it_matters: idea.why_it_matters || '',\n      further_reading: idea.further_reading || [],\n      merged_topics: Array.from(merged),\n      podcast_name: 'LinkedIn — ' + (($(\"Carry Source Context\").item.json._author_name) || ''),\n      episode_title: 'LinkedIn post by ' + (($(\"Carry Source Context\").item.json._author_name) || ''),\n      episode_url: ($(\"Carry Source Context\").item.json._post_url) || '',\n      episode_published: ($(\"Carry Source Context\").item.json._posted_at) || '',\n      source_page_id: ($(\"Carry Source Context\").item.json.source_page_id) || '',\n      source_type: 'linkedin',\n      transcript_id: ($(\"Carry Source Context\").item.json._urn) || '',\n      transcript_source: 'LinkedIn',\n      extraction_model: 'Sonnet 4.6',\n    } });\n  }\n}\nreturn out;\n"
+        },
+        "name": "Parse Ideas + Split",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2220,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000168"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.notion.com/v1/pages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Notion-Version",
+                "value": "2022-06-28"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify((() => {\n  const j = $json;\n  const props = {\n    Title: { title: [{ text: { content: (j.topic_headline || \"Untitled\").substring(0, 200) } }] },\n    Type: { select: { name: \"Idea\" } },\n    \"Source Type\": { select: { name: \"linkedin\" } },\n    Episode: { rich_text: [{ type: \"text\", text: { content: (j.episode_title || \"\").substring(0, 2000), link: j.episode_url ? { url: j.episode_url } : null } }] },\n    Published: { date: { start: (j.episode_published || \"\").substring(0, 10) || null } },\n    \"Hot Take Potential\": { select: { name: j.hot_take_potential || \"Medium\" } },\n    Utility: { select: { name: j.utility || \"Medium\" } },\n    Relevance: { select: { name: j.relevance || \"Medium\" } },\n    Format: { select: { name: j.format || \"Explainer\" } },\n    Topics: { multi_select: (j.merged_topics || []).map(t => ({ name: t })) },\n    Audience: { multi_select: (j.audience || []).map(a => ({ name: a })) },\n    Summary: { rich_text: [{ text: { content: (j.hook || \"\").substring(0, 2000) } }] },\n    \"Extraction Model\": { select: { name: \"Sonnet 4.6\" } },\n    \"Transcript Source\": { select: { name: \"LinkedIn\" } },\n    \"Transcript ID\": { rich_text: [{ text: { content: (j.transcript_id || \"\").substring(0, 2000) } }] },\n    \"Episode Source\": j.source_page_id ? { relation: [{ id: j.source_page_id }] } : { relation: [] }\n  };\n  const children = [\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Hook\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.hook || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Draft Angle\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.draft_angle || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Key Points\" } }] } },\n    ...(j.key_points || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Observations\" } }] } },\n    ...(j.observations || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tips\" } }] } },\n    ...(j.tips || []).map(p => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(p).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Quotes\" } }] } },\n    ...(j.quotes || []).map(q => ({ object: \"block\", type: \"quote\", quote: { rich_text: [{ type: \"text\", text: { content: (\"\\\"\" + (q.quote || q.text || \"\") + \"\\\" — \" + (q.speaker || \"\")).substring(0, 2000) } }] } })),\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Why It Matters\" } }] } },\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (j.why_it_matters || \"\").substring(0, 2000) } }] } },\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Further Reading\" } }] } },\n    ...(j.further_reading || []).map(r => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(r).substring(0, 2000) } }] } }))\n  ];\n  return { parent: { database_id: \"aaaaaaaa-0000-4000-8000-000000000001\" }, properties: props, children };\n})()) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "name": "Notion: Create Idea Page",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2440,
+          300
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000169",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "lkBxXCZI71uJWuhy",
+            "name": "Notion API v2"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Profile Config": {
+        "main": [
+          [
+            {
+              "node": "Apify: Fetch Posts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apify: Fetch Posts": {
+        "main": [
+          [
+            {
+              "node": "Parse + Filter Posts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse + Filter Posts": {
+        "main": [
+          [
+            {
+              "node": "Notion: Query Existing LinkedIn",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notion: Query Existing LinkedIn": {
+        "main": [
+          [
+            {
+              "node": "Dedup: New Posts Only",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Dedup: New Posts Only": {
+        "main": [
+          [
+            {
+              "node": "Notion: Create LinkedIn Source",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notion: Create LinkedIn Source": {
+        "main": [
+          [
+            {
+              "node": "Carry Source Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Carry Source Context": {
+        "main": [
+          [
+            {
+              "node": "Claude Extract LinkedIn Ideas",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Extract LinkedIn Ideas": {
+        "main": [
+          [
+            {
+              "node": "Parse Ideas + Split",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Ideas + Split": {
+        "main": [
+          [
+            {
+              "node": "Notion: Create Idea Page",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fri 8am PT": {
+        "main": [
+          [
+            {
+              "node": "Profile Config",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Alec Foster",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-25T03:05:50.244Z",
+        "id": 141,
+        "workflowId": "x1HZ57HtQvSPYZue",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000158",
+        "event": "activated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      },
+      {
+        "createdAt": "2026-04-25T03:05:50.133Z",
+        "id": 140,
+        "workflowId": "x1HZ57HtQvSPYZue",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000158",
+        "event": "deactivated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      }
+    ]
+  }
+}
