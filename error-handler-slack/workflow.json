@@ -1,0 +1,197 @@
+{
+  "name": "Content Pipeline Error Handler — Slack Alert",
+  "description": null,
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const e = $json;\nconst wf = e.workflow || {};\nconst err = e.execution || {};\nconst lastNode = err.lastNodeExecuted || \"unknown\";\nconst mode = err.mode || \"unknown\";\nconst errMsg = (err.error && err.error.message) ? err.error.message : \"(no message)\";\nconst execUrl = \"https://mma-global.app.n8n.cloud/workflow/\" + wf.id + \"/executions/\" + (err.id || \"\");\nconst title = \"🚨 n8n error: \" + (wf.name || \"unknown\");\nconst body = [\n  \"*Workflow:* \" + (wf.name || wf.id),\n  \"*Failed node:* \" + lastNode,\n  \"*Mode:* \" + mode,\n  \"*Error:* ```\" + errMsg.substring(0, 500) + \"```\",\n  \"*Execution:* \" + execUrl\n].join(\"\\n\");\nreturn { json: { title, body, exec_url: execUrl } };"
+      },
+      "name": "Format Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_CHANNEL_ID",
+          "mode": "list",
+          "cachedResultName": ""
+        },
+        "text": "={{ $json.title }}\n\n{{ $json.body }}\n\n<{{ $json.exec_url }}|Open execution in n8n>",
+        "otherOptions": {
+          "includeLinkToWorkflow": false,
+          "mrkdwn": true
+        }
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        720,
+        304
+      ],
+      "name": "Send a message",
+      "webhookId": "REPLACE_WITH_WEBHOOK_PATH",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "REPLACE_WITH_SLACKOAUTH2API_CREDENTIAL_ID",
+          "name": "Slack OAuth2 API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Message": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "nodeGroups": [],
+  "activeVersionId": "aaaaaaaa-0000-4000-8000-000000000015",
+  "versionCounter": 19,
+  "sourceWorkflowId": null,
+  "activeVersion": {
+    "updatedAt": "2026-04-26T06:07:40.000Z",
+    "createdAt": "2026-04-26T06:05:56.238Z",
+    "versionId": "aaaaaaaa-0000-4000-8000-000000000015",
+    "workflowId": "HrwcI5OK2E2EZ8PV",
+    "nodes": [
+      {
+        "parameters": {},
+        "name": "Error Trigger",
+        "type": "n8n-nodes-base.errorTrigger",
+        "typeVersion": 1,
+        "position": [
+          240,
+          304
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000016"
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const e = $json;\nconst wf = e.workflow || {};\nconst err = e.execution || {};\nconst lastNode = err.lastNodeExecuted || \"unknown\";\nconst mode = err.mode || \"unknown\";\nconst errMsg = (err.error && err.error.message) ? err.error.message : \"(no message)\";\nconst execUrl = \"https://mma-global.app.n8n.cloud/workflow/\" + wf.id + \"/executions/\" + (err.id || \"\");\nconst title = \"🚨 n8n error: \" + (wf.name || \"unknown\");\nconst body = [\n  \"*Workflow:* \" + (wf.name || wf.id),\n  \"*Failed node:* \" + lastNode,\n  \"*Mode:* \" + mode,\n  \"*Error:* ```\" + errMsg.substring(0, 500) + \"```\",\n  \"*Execution:* \" + execUrl\n].join(\"\\n\");\nreturn { json: { title, body, exec_url: execUrl } };"
+        },
+        "name": "Format Message",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          464,
+          304
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000017"
+      },
+      {
+        "parameters": {
+          "authentication": "oAuth2",
+          "select": "channel",
+          "channelId": {
+            "__rl": true,
+            "value": "REPLACE_WITH_SLACK_CHANNEL_ID",
+            "mode": "list",
+            "cachedResultName": ""
+          },
+          "text": "={{ $json.title }}\n\n{{ $json.body }}\n\n<{{ $json.exec_url }}|Open execution in n8n>",
+          "otherOptions": {
+            "includeLinkToWorkflow": false,
+            "mrkdwn": true
+          }
+        },
+        "type": "n8n-nodes-base.slack",
+        "typeVersion": 2.4,
+        "position": [
+          720,
+          304
+        ],
+        "id": "aaaaaaaa-0000-4000-8000-000000000018",
+        "name": "Send a message",
+        "webhookId": "aaaaaaaa-0000-4000-8000-000000000019",
+        "credentials": {
+          "slackOAuth2Api": {
+            "id": "n2aWjmqdcDkBfPNm",
+            "name": "Slack OAuth2 API"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Error Trigger": {
+        "main": [
+          [
+            {
+              "node": "Format Message",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Message": {
+        "main": [
+          [
+            {
+              "node": "Send a message",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Alec Foster",
+    "name": "Version 6a9a9ee9",
+    "description": "",
+    "autosaved": true,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-26T06:07:40.547Z",
+        "id": 156,
+        "workflowId": "HrwcI5OK2E2EZ8PV",
+        "versionId": "aaaaaaaa-0000-4000-8000-000000000015",
+        "event": "activated",
+        "userId": "aaaaaaaa-0000-4000-8000-000000000014"
+      }
+    ]
+  }
+}
