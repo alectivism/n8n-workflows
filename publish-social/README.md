@@ -1,52 +1,43 @@
 # Multi-Channel Social Publisher
 
-One webhook → publishes the same post to **LinkedIn, X, Bluesky, and Threads** with per-channel formatting. The publish half of a content pipeline. Importable as a single n8n workflow JSON.
+One webhook → publishes the same post to X, Bluesky, and Threads with per-channel formatting. The publish half of a content pipeline. Importable as a single n8n workflow JSON.
 
 ## What it does
 
-A POST to the webhook with a body like:
+A POST to the webhook (path `content-publish`) with a body like:
 
 ```json
 {
   "slug": "2026-05-22-eval-rubric",
-  "channels": ["linkedin", "x", "bluesky", "threads"],
+  "channels": ["x", "bluesky", "threads"],
   "posts": {
-    "linkedin": { "text": "<full post>", "image_url": "<optional>" },
-    "x": { "text": "<280 chars>", "image_url": "<optional>" },
-    "bluesky": { "text": "<300 chars>", "image_url": "<optional>" },
-    "threads": { "text": "<post>", "image_url": "<optional>" }
-  },
-  "image_url": "<default if not in posts.*>"
+    "x": { "text": "<=280 chars>" },
+    "bluesky": { "thread": ["<=300 chars>", "<optional continuation>"] },
+    "threads": { "text": "<post>" }
+  }
 }
 ```
 
-…routes per `channels` array and posts to each enabled platform with the channel-specific text. Channels not listed are skipped.
+Routes per the `channels` array and posts to each enabled platform. Channels not listed are skipped, and each posts independently so one failed channel doesn't sink the others.
 
 ## Quick start
 
-1. Open your n8n instance → **Workflows** → **Import from File** → pick `workflow.json`
-2. For each social node (X, Bluesky, Threads, LinkedIn), click → **Credentials** → create a new credential of the matching type. The placeholder IDs in the imported file (`REPLACE_WITH_*_CREDENTIAL_ID`) won't resolve until you do this.
-3. Set the workflow to **Active**.
-4. Get the production webhook URL from the trigger node.
-5. POST to it from your content pipeline (curl, Claude Code, whatever).
+1. Import `workflow.json` (n8n → **Workflows** → **Import from File**).
+2. **X** posts through an n8n OAuth2 credential. Create it and select it on the X node — the placeholder `REPLACE_WITH_*_CREDENTIAL_ID` won't resolve until you do.
+3. **Bluesky** and **Threads** authenticate through n8n instance **Variables** read by Code nodes, not the credential store. Set: `BSKY_HANDLE`, `BSKY_APP_PASSWORD`, `THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`.
+4. Set the workflow **Active** and copy the production webhook URL from the trigger node.
+5. POST to it from your content pipeline.
 
-## Credentials needed
+## Credentials and variables
 
-| Channel | n8n credential type | How to create |
+| Channel | Auth | Where to get it |
 |---|---|---|
-| LinkedIn | OAuth2 (Sign in with LinkedIn API) | LinkedIn Developer → Create app → add OAuth scope |
-| X (Twitter) | OAuth2 | X Developer Portal → Create app with read+write |
-| Bluesky | App password | bsky.app → Settings → App passwords |
-| Threads | OAuth2 | Meta Developer Portal |
+| X (Twitter) | n8n OAuth2 credential | X Developer Portal → app with read + write |
+| Bluesky | instance Variables (`BSKY_HANDLE`, `BSKY_APP_PASSWORD`) | bsky.app → Settings → App passwords |
+| Threads | instance Variables (`THREADS_USER_ID`, `THREADS_ACCESS_TOKEN`) | Meta Developer Portal |
 
-Don't paste your credentials into the JSON file. n8n's credential store is encrypted; the JSON only references credential IDs.
-
-## Tested with
-
-- n8n self-hosted v1.50+
-- n8n cloud (any tier)
-- Both single-account and multi-account workflows
+Don't paste secrets into the JSON. Credential IDs and Variables are resolved by your own n8n instance.
 
 ## See also
 
-This workflow is part of a larger personal content pipeline by [Alec Foster](https://www.alecfoster.com). The other half — podcast intake and idea extraction — is sketched in `../podcast-intake/`.
+Part of a personal content pipeline by [Alec Foster](https://www.alecfoster.com/guides/content-pipeline). The intake half is in [`../podcast-intake/`](../podcast-intake/), and the source monitors are the other folders in this repo.

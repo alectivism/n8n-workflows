@@ -25,7 +25,7 @@ Each runs on its own schedule, pulls from its source type, dedupes, and writes n
 
 | Workflow | What it does | Status |
 |---|---|---|
-| [`publish-social/`](publish-social/) | One webhook, publishes the same post to LinkedIn, X, Bluesky, Threads with per-channel formatting. | ready to import |
+| [`publish-social/`](publish-social/) | One webhook, publishes the same post to X, Bluesky, and Threads with per-channel formatting. | ready to import |
 | [`linkedin-website-sync/`](linkedin-website-sync/) | Weekly cron that syncs recent LinkedIn posts to a JSON feed. Powers the activity feed on alecfoster.com. | ready to import |
 
 ## Ops
