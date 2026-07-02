@@ -148,7 +148,7 @@
     {
       "parameters": {
         "language": "javaScript",
-        "jsCode": "// Post to Meta Threads (single long post + optional image).\n// Requires n8n Variables: THREADS_USER_ID, THREADS_ACCESS_TOKEN.\n\nconst userId = $vars.THREADS_USER_ID;\nconst accessToken = $vars.THREADS_ACCESS_TOKEN;\nif (!userId || !accessToken) throw new Error('Missing THREADS_USER_ID or THREADS_ACCESS_TOKEN');\n\nconst item = $input.item.json;\nconst text = item.posts.threads.text;\nconst imageUrl = item.image_url;\nconst authHeader = { Authorization: `Bearer ${accessToken}` };\n\n// 1. Create media container\nconst containerBody = { media_type: imageUrl ? 'IMAGE' : 'TEXT', text };\nif (imageUrl) containerBody.image_url = imageUrl;\n\nconst container = await $helpers.httpRequest({\n  method: 'POST',\n  url: `https://graph.threads.net/v1.0/${userId}/threads`,\n  headers: authHeader,\n  body: containerBody,\n  json: true,\n});\nconst creationId = container.id;\n\n// 2. Publish \u2014 retry up to 6 times if the image container isn't ready yet.\n//    Each attempt first probes the container status via GET, which provides natural backoff without timers.\nlet publishRes;\nlet lastErr;\nfor (let attempt = 0; attempt < 6; attempt++) {\n  // Probe container readiness via GET; round-trip serves as backoff\n  if (attempt > 0) {\n    try {\n      await $helpers.httpRequest({\n        method: 'GET',\n        url: `https://graph.threads.net/v1.0/${creationId}`,\n        headers: authHeader,\n        qs: { fields: 'status,error_message' },\n        json: true,\n      });\n    } catch (_) { /* ignore probe failures */ }\n  }\n  try {\n    publishRes = await $helpers.httpRequest({\n      method: 'POST',\n      url: `https://graph.threads.net/v1.0/${userId}/threads_publish`,\n      headers: authHeader,\n      qs: { creation_id: creationId },\n      json: true,\n    });\n    break;\n  } catch (err) {\n    lastErr = err;\n    // If not ready yet, keep looping; for other errors, stop immediately.\n    const msg = String(err?.message || err);\n    if (!msg.includes('not ready') && !msg.includes('Media ID is not available')) throw err;\n  }\n}\nif (!publishRes) throw lastErr || new Error('Threads publish failed after retries');\n\nreturn {\n  json: {\n    channel: 'threads',\n    slug: item.slug,\n    post_id: publishRes.id,\n    url: `https://www.threads.net/@me/post/${publishRes.id}`,\n  },\n};\n"
+        "jsCode": "// Post to Meta Threads (single long post + optional image).\n// Requires n8n Variables: THREADS_USER_ID, THREADS_ACCESS_TOKEN.\n\nconst userId = $vars.THREADS_USER_ID;\nconst accessToken = $vars.THREADS_ACCESS_TOKEN;\nif (!userId || !accessToken) throw new Error('Missing THREADS_USER_ID or THREADS_ACCESS_TOKEN');\n\nconst item = $input.item.json;\nconst text = item.posts.threads.text;\nconst imageUrl = item.image_url;\nconst authHeader = { Authorization: `Bearer ${accessToken}` };\n\n// 1. Create media container\nconst containerBody = { media_type: imageUrl ? 'IMAGE' : 'TEXT', text };\nif (imageUrl) containerBody.image_url = imageUrl;\n\nconst container = await $helpers.httpRequest({\n  method: 'POST',\n  url: `https://graph.threads.net/v1.0/${userId}/threads`,\n  headers: authHeader,\n  body: containerBody,\n  json: true,\n});\nconst creationId = container.id;\n\n// 2. Publish — retry up to 6 times if the image container isn't ready yet.\n//    Each attempt first probes the container status via GET, which provides natural backoff without timers.\nlet publishRes;\nlet lastErr;\nfor (let attempt = 0; attempt < 6; attempt++) {\n  // Probe container readiness via GET; round-trip serves as backoff\n  if (attempt > 0) {\n    try {\n      await $helpers.httpRequest({\n        method: 'GET',\n        url: `https://graph.threads.net/v1.0/${creationId}`,\n        headers: authHeader,\n        qs: { fields: 'status,error_message' },\n        json: true,\n      });\n    } catch (_) { /* ignore probe failures */ }\n  }\n  try {\n    publishRes = await $helpers.httpRequest({\n      method: 'POST',\n      url: `https://graph.threads.net/v1.0/${userId}/threads_publish`,\n      headers: authHeader,\n      qs: { creation_id: creationId },\n      json: true,\n    });\n    break;\n  } catch (err) {\n    lastErr = err;\n    // If not ready yet, keep looping; for other errors, stop immediately.\n    const msg = String(err?.message || err);\n    if (!msg.includes('not ready') && !msg.includes('Media ID is not available')) throw err;\n  }\n}\nif (!publishRes) throw lastErr || new Error('Threads publish failed after retries');\n\nreturn {\n  json: {\n    channel: 'threads',\n    slug: item.slug,\n    post_id: publishRes.id,\n    url: `https://www.threads.net/@me/post/${publishRes.id}`,\n  },\n};\n"
       },
       "id": "threads-post",
       "name": "Post to Threads",
@@ -208,7 +208,7 @@
     },
     {
       "parameters": {
-        "numberInputs": 3
+        "numberInputs": 4
       },
       "id": "merge-results",
       "name": "Merge Results",
@@ -232,6 +232,52 @@
       "position": [
         1400,
         400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c4",
+              "leftValue": "={{ $json.channels }}",
+              "rightValue": "linkedin",
+              "operator": {
+                "type": "array",
+                "operation": "contains",
+                "rightType": "any"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-linkedin",
+      "name": "If LinkedIn Enabled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        700,
+        750
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Post a text update to LinkedIn via the UGC Posts API.\n// Requires n8n Variables: LINKEDIN_ACCESS_TOKEN and LINKEDIN_AUTHOR_URN\n// (e.g. urn:li:person:xxxxxxxx). LinkedIn API posting access is gated by\n// LinkedIn; you need an approved app with w_member_social scope.\nconst token = $vars.LINKEDIN_ACCESS_TOKEN;\nconst author = $vars.LINKEDIN_AUTHOR_URN;\nif (!token || !author) throw new Error('Missing LINKEDIN_ACCESS_TOKEN or LINKEDIN_AUTHOR_URN');\n\nconst item = $input.item.json;\nconst text = item.posts.linkedin.text;\n\nconst res = await $helpers.httpRequest({\n  method: 'POST',\n  url: 'https://api.linkedin.com/v2/ugcPosts',\n  headers: {\n    Authorization: `Bearer ${token}`,\n    'X-Restli-Protocol-Version': '2.0.0',\n    'Content-Type': 'application/json',\n  },\n  body: {\n    author,\n    lifecycleState: 'PUBLISHED',\n    specificContent: {\n      'com.linkedin.ugc.ShareContent': {\n        shareCommentary: { text },\n        shareMediaCategory: 'NONE',\n      },\n    },\n    visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },\n  },\n  json: true,\n});\n\nreturn { json: { channel: 'linkedin', ok: true, id: res.id ?? null } };\n"
+      },
+      "id": "linkedin-post",
+      "name": "Post to LinkedIn",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        750
       ]
     }
   ],
@@ -262,6 +308,11 @@
           },
           {
             "node": "If Bluesky Enabled",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "If LinkedIn Enabled",
             "type": "main",
             "index": 0
           }
@@ -344,6 +395,28 @@
             "node": "Respond to Webhook",
             "type": "main",
             "index": 0
+          }
+        ]
+      ]
+    },
+    "If LinkedIn Enabled": {
+      "main": [
+        [
+          {
+            "node": "Post to LinkedIn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to LinkedIn": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 3
           }
         ]
       ]
