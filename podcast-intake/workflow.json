@@ -2110,7 +2110,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "0vt6EpLhFV54DMWf",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "AssemblyAI API"
           }
         }
@@ -2157,7 +2157,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "0vt6EpLhFV54DMWf",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "AssemblyAI API"
           }
         }
@@ -2349,7 +2349,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "ftgCjJWOeEdvQ4Kj",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Vimeo PAT"
           }
         }
@@ -2476,7 +2476,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "ftgCjJWOeEdvQ4Kj",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Vimeo PAT"
           }
         }
@@ -2589,7 +2589,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "ftgCjJWOeEdvQ4Kj",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Vimeo PAT"
           }
         }
@@ -2698,7 +2698,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "0vt6EpLhFV54DMWf",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "AssemblyAI API"
           }
         }
@@ -2745,7 +2745,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "0vt6EpLhFV54DMWf",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "AssemblyAI API"
           }
         }
@@ -2987,7 +2987,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "hrJsx0jwWYoqTin3",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Anthropic API"
           }
         },
@@ -3120,7 +3120,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         },
@@ -3235,7 +3235,7 @@
         ],
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         },
@@ -3378,7 +3378,7 @@
         ],
         "credentials": {
           "httpHeaderAuth": {
-            "id": "AiR3xnA54BebUcEp",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Firecrawl API"
           }
         },
@@ -3454,7 +3454,7 @@
         ],
         "credentials": {
           "googleDriveOAuth2Api": {
-            "id": "zpamjtQMC4RRrZmt",
+            "id": "REPLACE_WITH_GOOGLEDRIVEOAUTH2API_CREDENTIAL_ID",
             "name": "Google Drive - Alec"
           }
         },

@@ -1,40 +1,33 @@
-# Reddit AI Subreddits — Monthly Top
+# Content Pipeline: Reddit AI Subreddits — Monthly Top
 
-Monthly cron (first Friday) that grabs the month's top AI subreddit posts and files them to Notion.
+Monthly cron (first Friday) over the month's top AI subreddit posts. The slower, higher-bar companion to the weekly variant.
 
-Part of a personal content pipeline by [Alec Foster](https://www.alecfoster.com). Importable as a single n8n workflow JSON.
+## How it works
 
-## What it does
+- **Trigger:** schedule (cron) — `0 0 9 1-7 * 5`
+- **Nodes:** 12
+- **Sink:** normalized rows in a Notion database (the shared intake DB for the pipeline)
 
-Same shape as the weekly variant but reads `top/.rss?t=month` and runs on the first Friday of each month (cron `0 0 9 1-7 * 5`). Useful for a slower, higher-bar digest.
+## Credentials to replace
 
-## At a glance
+Every credential ID in the JSON is a placeholder (`REPLACE_WITH_*`). After import, open each flagged node, create the matching credential in your own instance, and select it.
 
-| | |
-|---|---|
-| Trigger | Schedule (cron) |
-| Schedule | Monthly, first Fri 09:00 |
-| Nodes | 12 |
-| Destination | Notion content database |
+- HTTP Header Auth (one per external service — the credential names on each node say which: Notion, Anthropic, Firecrawl, Apify, AssemblyAI, Vimeo)
 
-## Quick start
+## Sample sources
 
-1. Open your n8n instance → **Workflows** → **Import from File** → pick `workflow.json`.
-2. Replace the placeholder credentials (see below). The imported file ships with `REPLACE_WITH_*_CREDENTIAL_ID` placeholders that won't resolve until you create your own.
-3. Repoint the Notion database: the workflow references placeholder database IDs (`aaaaaaaa-0000-...`). Open each Notion node, pick your own database, and remap the property fields.
-4. Set the workflow **Active**. The cron will fire on the schedule above.
+These are my sources, left in as working examples. Swap them for your own.
 
-## Credentials needed
+- `https://www.reddit.com/r/'`
 
-| Service | n8n credential type | Notes |
-|---|---|---|
-| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for the LLM/API used to score posts |
+## Import
 
-Don't paste secrets into the JSON. n8n's credential store is encrypted; the JSON only references credential IDs.
+1. n8n → **Workflows** → **Import from File** → select `workflow.json`
+2. Replace the placeholder credentials (above)
+3. Point the sink at your own Notion database ID
+4. Run once manually, then activate
 
-## What's been sanitized
+## Sanitized
+No API keys, tokens, or webhook secrets. Credential IDs, workflow `id`/`versionId`, and personal identifiers (Notion DB IDs, monitored rosters) are placeholders or samples.
 
-- Credential references replaced with `REPLACE_WITH_*_CREDENTIAL_ID` placeholders
-- All real Notion database/property IDs remapped to inert placeholder UUIDs (`aaaaaaaa-0000-4000-8000-…`)
-- API tokens, Slack channel IDs, Google Drive folder IDs, and email addresses removed
-- Environment-specific fields (`id`, `versionId`, `tags`, `active`, pinned data) stripped
+MIT. Part of the [content pipeline](https://www.alecfoster.com/guides/content-pipeline) behind alecfoster.com.

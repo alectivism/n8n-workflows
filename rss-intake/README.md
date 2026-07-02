@@ -1,40 +1,40 @@
-# Industry RSS Intake
+# Content Pipeline: RSS Intake
 
-Daily cron over core industry RSS feeds. Reads, dedupes, and writes new items to a Notion content database.
+Daily cron over core industry feeds (AdExchanger, IAB, Digiday, TechCrunch AI). Dedupes and writes new items to a Notion content database. The original intake workflow.
 
-Part of a personal content pipeline by [Alec Foster](https://www.alecfoster.com). Importable as a single n8n workflow JSON.
+## How it works
 
-## What it does
+- **Trigger:** schedule (cron) — `0 14 * * *`
+- **Nodes:** 19
+- **Sink:** normalized rows in a Notion database (the shared intake DB for the pipeline)
 
-The original intake workflow. Pulls a dozen marketing/AI industry feeds (AdExchanger, IAB, Digiday, Marketing Dive, MIT Tech Review AI, TechCrunch AI, VentureBeat AI, Wired AI, TLDR AI, and more), filters out items already seen, and creates a page per new article in Notion.
+## Credentials to replace
 
-## At a glance
+Every credential ID in the JSON is a placeholder (`REPLACE_WITH_*`). After import, open each flagged node, create the matching credential in your own instance, and select it.
 
-| | |
-|---|---|
-| Trigger | Schedule (cron) |
-| Schedule | Daily, 14:00 |
-| Nodes | 19 |
-| Destination | Notion content database |
+- Notion API
 
-## Quick start
+## Sample sources
 
-1. Open your n8n instance → **Workflows** → **Import from File** → pick `workflow.json`.
-2. Replace the placeholder credentials (see below). The imported file ships with `REPLACE_WITH_*_CREDENTIAL_ID` placeholders that won't resolve until you create your own.
-3. Repoint the Notion database: the workflow references placeholder database IDs (`aaaaaaaa-0000-...`). Open each Notion node, pick your own database, and remap the property fields.
-4. Set the workflow **Active**. The cron will fire on the schedule above.
+These are my sources, left in as working examples. Swap them for your own.
 
-## Credentials needed
+- `http://www.marketingaiinstitute.com/blog/rss.xml`
+- `https://digiday.com/feed/`
+- `https://iabtechlab.com/category/blog/feed/`
+- `https://iapp.org/rss/daily-dashboard/`
+- `https://techcrunch.com/category/artificial-intelligence/feed/`
+- `https://tldr.tech/ai/rss`
+- `https://venturebeat.com/category/ai/feed/`
+- `https://www.adexchanger.com/feed/`
 
-| Service | n8n credential type | Notes |
-|---|---|---|
-| Notion | `notionApi` | Notion integration token with access to your content database |
+## Import
 
-Don't paste secrets into the JSON. n8n's credential store is encrypted; the JSON only references credential IDs.
+1. n8n → **Workflows** → **Import from File** → select `workflow.json`
+2. Replace the placeholder credentials (above)
+3. Point the sink at your own Notion database ID
+4. Run once manually, then activate
 
-## What's been sanitized
+## Sanitized
+No API keys, tokens, or webhook secrets. Credential IDs, workflow `id`/`versionId`, and personal identifiers (Notion DB IDs, monitored rosters) are placeholders or samples.
 
-- Credential references replaced with `REPLACE_WITH_*_CREDENTIAL_ID` placeholders
-- All real Notion database/property IDs remapped to inert placeholder UUIDs (`aaaaaaaa-0000-4000-8000-…`)
-- API tokens, Slack channel IDs, Google Drive folder IDs, and email addresses removed
-- Environment-specific fields (`id`, `versionId`, `tags`, `active`, pinned data) stripped
+MIT. Part of the [content pipeline](https://www.alecfoster.com/guides/content-pipeline) behind alecfoster.com.

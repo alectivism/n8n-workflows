@@ -639,7 +639,7 @@
         "id": "aaaaaaaa-0000-4000-8000-000000000060",
         "credentials": {
           "httpHeaderAuth": {
-            "id": "AiR3xnA54BebUcEp",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Firecrawl API"
           }
         }
@@ -696,7 +696,7 @@
         "id": "aaaaaaaa-0000-4000-8000-000000000062",
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }
@@ -752,7 +752,7 @@
         "id": "aaaaaaaa-0000-4000-8000-000000000064",
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }
@@ -859,7 +859,7 @@
         "id": "aaaaaaaa-0000-4000-8000-000000000066",
         "credentials": {
           "httpHeaderAuth": {
-            "id": "hrJsx0jwWYoqTin3",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Anthropic API"
           }
         }
@@ -915,7 +915,7 @@
         "id": "aaaaaaaa-0000-4000-8000-000000000068",
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }

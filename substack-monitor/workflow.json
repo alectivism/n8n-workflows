@@ -43,24 +43,24 @@
         304
       ],
       "parameters": {
-        "method": "GET",
-        "url": "={{ $json.feed_url }}",
+        "method": "POST",
+        "url": "https://api.firecrawl.dev/v1/scrape",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
-              "name": "Accept",
-              "value": "application/rss+xml, application/xml, text/xml, */*"
+              "name": "Content-Type",
+              "value": "application/json"
             }
           ]
         },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ url: $json.feed_url, formats: [\"rawHtml\"], onlyMainContent: false }) }}",
         "options": {
-          "response": {
-            "response": {
-              "responseFormat": "text"
-            }
-          },
-          "timeout": 30000
+          "timeout": 60000
         }
       }
     },
@@ -74,7 +74,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "\nconst cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;\nconst items = $input.all();\nconst out = [];\n\nfor (const item of items) {\n  const feedName = item.json.feed_url\n    ? item.json.feed_url\n    : '';\n  // The HTTP node returns the body as 'data' or as the raw response\n  const xml = (typeof item.json.data === 'string') ? item.json.data : (item.json.body || '');\n  \n  // Parse <item> blocks via regex (no DOM parser in n8n sandbox)\n  const itemBlocks = xml.match(/<item[\\s>][\\s\\S]*?<\\/item>/gi) || [];\n  let count = 0;\n  \n  // Try to extract feed name from channel title\n  const chanTitleMatch = xml.match(/<channel>[\\s\\S]*?<title><!\\[CDATA\\[(.*?)\\]\\]><\\/title>/i)\n    || xml.match(/<channel>[\\s\\S]*?<title>(.*?)<\\/title>/i);\n  // Get feed_url and name from the pairing — we stored in the item's upstream context\n  // We need to find which feed this is. We'll use pairing index fallback.\n  \n  for (const block of itemBlocks) {\n    if (count >= 5) break;\n    \n    const titleMatch = block.match(/<title><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/title>/)\n      || block.match(/<title>([\\s\\S]*?)<\\/title>/);\n    const linkMatch = block.match(/<link>([\\s\\S]*?)<\\/link>/)\n      || block.match(/<guid[^>]*>(https?:\\/\\/[^<]+)<\\/guid>/);\n    const pubDateMatch = block.match(/<pubDate>([\\s\\S]*?)<\\/pubDate>/)\n      || block.match(/<published>([\\s\\S]*?)<\\/published>/);\n    const descMatch = block.match(/<description><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/description>/)\n      || block.match(/<description>([\\s\\S]*?)<\\/description>/);\n    const contentMatch = block.match(/<content:encoded><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/content:encoded>/)\n      || block.match(/<content:encoded>([\\s\\S]*?)<\\/content:encoded>/);\n    \n    const title = titleMatch ? titleMatch[1].trim() : '';\n    const url = linkMatch ? linkMatch[1].trim().replace(/<!\\[CDATA\\[/, '').replace(/\\]\\]>/, '') : '';\n    const pubDate = pubDateMatch ? pubDateMatch[1].trim() : '';\n    const desc = descMatch ? descMatch[1].replace(/<[^>]+>/g, '').trim() : '';\n    const content = contentMatch ? contentMatch[1].replace(/<[^>]+>/g, '').trim() : desc;\n    \n    if (!title || !url) continue;\n    \n    // Date filter\n    const ts = pubDate ? Date.parse(pubDate) : 0;\n    if (ts && ts < cutoff) continue;\n    \n    out.push({ json: {\n      title: title.substring(0, 500),\n      url: url.substring(0, 2000),\n      published_at: pubDate ? new Date(pubDate).toISOString().substring(0, 10) : '',\n      description: desc.substring(0, 500),\n      feed_name: item.json.feed_name || '',\n    }});\n    count++;\n  }\n}\n\nreturn out.length ? out : [{ json: { _empty: true } }];\n"
+        "jsCode": "\nconst cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;\nconst items = $input.all();\nconst out = [];\n\nfor (const item of items) {\n  const feedName = item.json.feed_url\n    ? item.json.feed_url\n    : '';\n  // The HTTP node returns the body as 'data' or as the raw response\n  const xml = item.json?.data?.rawHtml || item.json?.data?.html || (typeof item.json.data === 'string' ? item.json.data : '') || '';\n  \n  // Parse <item> blocks via regex (no DOM parser in n8n sandbox)\n  const itemBlocks = xml.match(/<item[\\s>][\\s\\S]*?<\\/item>/gi) || [];\n  let count = 0;\n  \n  // Try to extract feed name from channel title\n  const chanTitleMatch = xml.match(/<channel>[\\s\\S]*?<title><!\\[CDATA\\[(.*?)\\]\\]><\\/title>/i)\n    || xml.match(/<channel>[\\s\\S]*?<title>(.*?)<\\/title>/i);\n  // Get feed_url and name from the pairing — we stored in the item's upstream context\n  // We need to find which feed this is. We'll use pairing index fallback.\n  \n  for (const block of itemBlocks) {\n    if (count >= 5) break;\n    \n    const titleMatch = block.match(/<title><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/title>/)\n      || block.match(/<title>([\\s\\S]*?)<\\/title>/);\n    const linkMatch = block.match(/<link>([\\s\\S]*?)<\\/link>/)\n      || block.match(/<guid[^>]*>(https?:\\/\\/[^<]+)<\\/guid>/);\n    const pubDateMatch = block.match(/<pubDate>([\\s\\S]*?)<\\/pubDate>/)\n      || block.match(/<published>([\\s\\S]*?)<\\/published>/);\n    const descMatch = block.match(/<description><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/description>/)\n      || block.match(/<description>([\\s\\S]*?)<\\/description>/);\n    const contentMatch = block.match(/<content:encoded><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/content:encoded>/)\n      || block.match(/<content:encoded>([\\s\\S]*?)<\\/content:encoded>/);\n    \n    const title = titleMatch ? titleMatch[1].trim() : '';\n    const url = linkMatch ? linkMatch[1].trim().replace(/<!\\[CDATA\\[/, '').replace(/\\]\\]>/, '') : '';\n    const pubDate = pubDateMatch ? pubDateMatch[1].trim() : '';\n    const desc = descMatch ? descMatch[1].replace(/<[^>]+>/g, '').trim() : '';\n    const content = contentMatch ? contentMatch[1].replace(/<[^>]+>/g, '').trim() : desc;\n    \n    if (!title || !url) continue;\n    \n    // Date filter\n    const ts = pubDate ? Date.parse(pubDate) : 0;\n    if (ts && ts < cutoff) continue;\n    \n    out.push({ json: {\n      title: title.substring(0, 500),\n      url: url.substring(0, 2000),\n      published_at: pubDate ? new Date(pubDate).toISOString().substring(0, 10) : '',\n      description: desc.substring(0, 500),\n      feed_name: item.json.feed_name || '',\n    }});\n    count++;\n  }\n}\n\nreturn out.length ? out : [{ json: { _empty: true } }];\n"
       }
     },
     {
@@ -601,7 +601,7 @@
         "id": "node-parse-rss-01",
         "parameters": {
           "mode": "runOnceForAllItems",
-          "jsCode": "\nconst cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;\nconst items = $input.all();\nconst out = [];\n\nfor (const item of items) {\n  const feedName = item.json.feed_url\n    ? item.json.feed_url\n    : '';\n  // The HTTP node returns the body as 'data' or as the raw response\n  const xml = (typeof item.json.data === 'string') ? item.json.data : (item.json.body || '');\n  \n  // Parse <item> blocks via regex (no DOM parser in n8n sandbox)\n  const itemBlocks = xml.match(/<item[\\s>][\\s\\S]*?<\\/item>/gi) || [];\n  let count = 0;\n  \n  // Try to extract feed name from channel title\n  const chanTitleMatch = xml.match(/<channel>[\\s\\S]*?<title><!\\[CDATA\\[(.*?)\\]\\]><\\/title>/i)\n    || xml.match(/<channel>[\\s\\S]*?<title>(.*?)<\\/title>/i);\n  // Get feed_url and name from the pairing — we stored in the item's upstream context\n  // We need to find which feed this is. We'll use pairing index fallback.\n  \n  for (const block of itemBlocks) {\n    if (count >= 5) break;\n    \n    const titleMatch = block.match(/<title><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/title>/)\n      || block.match(/<title>([\\s\\S]*?)<\\/title>/);\n    const linkMatch = block.match(/<link>([\\s\\S]*?)<\\/link>/)\n      || block.match(/<guid[^>]*>(https?:\\/\\/[^<]+)<\\/guid>/);\n    const pubDateMatch = block.match(/<pubDate>([\\s\\S]*?)<\\/pubDate>/)\n      || block.match(/<published>([\\s\\S]*?)<\\/published>/);\n    const descMatch = block.match(/<description><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/description>/)\n      || block.match(/<description>([\\s\\S]*?)<\\/description>/);\n    const contentMatch = block.match(/<content:encoded><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/content:encoded>/)\n      || block.match(/<content:encoded>([\\s\\S]*?)<\\/content:encoded>/);\n    \n    const title = titleMatch ? titleMatch[1].trim() : '';\n    const url = linkMatch ? linkMatch[1].trim().replace(/<!\\[CDATA\\[/, '').replace(/\\]\\]>/, '') : '';\n    const pubDate = pubDateMatch ? pubDateMatch[1].trim() : '';\n    const desc = descMatch ? descMatch[1].replace(/<[^>]+>/g, '').trim() : '';\n    const content = contentMatch ? contentMatch[1].replace(/<[^>]+>/g, '').trim() : desc;\n    \n    if (!title || !url) continue;\n    \n    // Date filter\n    const ts = pubDate ? Date.parse(pubDate) : 0;\n    if (ts && ts < cutoff) continue;\n    \n    out.push({ json: {\n      title: title.substring(0, 500),\n      url: url.substring(0, 2000),\n      published_at: pubDate ? new Date(pubDate).toISOString().substring(0, 10) : '',\n      description: desc.substring(0, 500),\n      feed_name: item.json.feed_name || '',\n    }});\n    count++;\n  }\n}\n\nreturn out.length ? out : [{ json: { _empty: true } }];\n"
+          "jsCode": "\nconst cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;\nconst items = $input.all();\nconst out = [];\n\nfor (const item of items) {\n  const feedName = item.json.feed_url\n    ? item.json.feed_url\n    : '';\n  // The HTTP node returns the body as 'data' or as the raw response\n  const xml = item.json?.data?.rawHtml || item.json?.data?.html || (typeof item.json.data === 'string' ? item.json.data : '') || '';\n  \n  // Parse <item> blocks via regex (no DOM parser in n8n sandbox)\n  const itemBlocks = xml.match(/<item[\\s>][\\s\\S]*?<\\/item>/gi) || [];\n  let count = 0;\n  \n  // Try to extract feed name from channel title\n  const chanTitleMatch = xml.match(/<channel>[\\s\\S]*?<title><!\\[CDATA\\[(.*?)\\]\\]><\\/title>/i)\n    || xml.match(/<channel>[\\s\\S]*?<title>(.*?)<\\/title>/i);\n  // Get feed_url and name from the pairing — we stored in the item's upstream context\n  // We need to find which feed this is. We'll use pairing index fallback.\n  \n  for (const block of itemBlocks) {\n    if (count >= 5) break;\n    \n    const titleMatch = block.match(/<title><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/title>/)\n      || block.match(/<title>([\\s\\S]*?)<\\/title>/);\n    const linkMatch = block.match(/<link>([\\s\\S]*?)<\\/link>/)\n      || block.match(/<guid[^>]*>(https?:\\/\\/[^<]+)<\\/guid>/);\n    const pubDateMatch = block.match(/<pubDate>([\\s\\S]*?)<\\/pubDate>/)\n      || block.match(/<published>([\\s\\S]*?)<\\/published>/);\n    const descMatch = block.match(/<description><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/description>/)\n      || block.match(/<description>([\\s\\S]*?)<\\/description>/);\n    const contentMatch = block.match(/<content:encoded><!\\[CDATA\\[([\\s\\S]*?)\\]\\]><\\/content:encoded>/)\n      || block.match(/<content:encoded>([\\s\\S]*?)<\\/content:encoded>/);\n    \n    const title = titleMatch ? titleMatch[1].trim() : '';\n    const url = linkMatch ? linkMatch[1].trim().replace(/<!\\[CDATA\\[/, '').replace(/\\]\\]>/, '') : '';\n    const pubDate = pubDateMatch ? pubDateMatch[1].trim() : '';\n    const desc = descMatch ? descMatch[1].replace(/<[^>]+>/g, '').trim() : '';\n    const content = contentMatch ? contentMatch[1].replace(/<[^>]+>/g, '').trim() : desc;\n    \n    if (!title || !url) continue;\n    \n    // Date filter\n    const ts = pubDate ? Date.parse(pubDate) : 0;\n    if (ts && ts < cutoff) continue;\n    \n    out.push({ json: {\n      title: title.substring(0, 500),\n      url: url.substring(0, 2000),\n      published_at: pubDate ? new Date(pubDate).toISOString().substring(0, 10) : '',\n      description: desc.substring(0, 500),\n      feed_name: item.json.feed_name || '',\n    }});\n    count++;\n  }\n}\n\nreturn out.length ? out : [{ json: { _empty: true } }];\n"
         }
       },
       {
@@ -640,7 +640,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }
@@ -722,7 +722,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "AiR3xnA54BebUcEp",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Firecrawl API"
           }
         }
@@ -810,7 +810,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "hrJsx0jwWYoqTin3",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Anthropic API"
           }
         }
@@ -864,7 +864,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }
@@ -905,7 +905,7 @@
         },
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }

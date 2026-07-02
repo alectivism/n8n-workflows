@@ -1,41 +1,41 @@
-# Podcast RSS + Vimeo Intake
+# Content Pipeline: Podcast RSS + Vimeo Intake
 
-Twice-weekly cron: pulls podcast RSS (+ Vimeo) → transcribes → extracts topic ideas with an LLM → writes to Notion.
+Twice-weekly cron: pulls podcast RSS and Vimeo, transcribes new media, extracts topic ideas with an LLM, and writes to Notion. Google Drive holds the transcripts.
 
-Part of a personal content pipeline by [Alec Foster](https://www.alecfoster.com). Importable as a single n8n workflow JSON.
+## How it works
 
-## What it does
+- **Trigger:** schedule (cron) — `0 0 10 * * 2,5`
+- **Nodes:** 40
+- **Sink:** normalized rows in a Notion database (the shared intake DB for the pipeline)
 
-Pulls a roster of podcast RSS feeds (and Vimeo sources), routes audio to a transcription service, polls for completion with a Wait node, extracts topic ideas with an LLM, stores transcripts in Google Drive, and writes ideas to Notion.
+## Credentials to replace
 
-## At a glance
+Every credential ID in the JSON is a placeholder (`REPLACE_WITH_*`). After import, open each flagged node, create the matching credential in your own instance, and select it.
 
-| | |
-|---|---|
-| Trigger | Schedule (cron) |
-| Schedule | Tue & Fri, 10:00 |
-| Nodes | 40 |
-| Destination | Notion content database |
+- Google Drive (OAuth2)
+- HTTP Header Auth (one per external service — the credential names on each node say which: Notion, Anthropic, Firecrawl, Apify, AssemblyAI, Vimeo)
 
-## Quick start
+## Sample sources
 
-1. Open your n8n instance → **Workflows** → **Import from File** → pick `workflow.json`.
-2. Replace the placeholder credentials (see below). The imported file ships with `REPLACE_WITH_*_CREDENTIAL_ID` placeholders that won't resolve until you create your own.
-3. Repoint the Notion database: the workflow references placeholder database IDs (`aaaaaaaa-0000-...`). Open each Notion node, pick your own database, and remap the property fields.
-4. Set the workflow **Active**. The cron will fire on the schedule above.
+These are my sources, left in as working examples. Swap them for your own.
 
-## Credentials needed
+- `https://api.vimeo.com/me/videos`
+- `https://api.vimeo.com/videos/{{`
+- `https://changelog.com/practicalai/feed',`
+- `https://feeds.buzzsprout.com/2418777.rss',`
+- `https://feeds.megaphone.fm/CSIS8973369418',`
+- `https://feeds.megaphone.fm/PDP6186156462',`
+- `https://feeds.megaphone.fm/buildingbettercmos',`
+- `https://feeds.megaphone.fm/marketingai',`
 
-| Service | n8n credential type | Notes |
-|---|---|---|
-| Google Drive | `googleDriveOAuth2Api` | OAuth2 for transcript storage |
-| HTTP Header Auth | `httpHeaderAuth` | Header-auth credential for the transcription API and the LLM |
+## Import
 
-Don't paste secrets into the JSON. n8n's credential store is encrypted; the JSON only references credential IDs.
+1. n8n → **Workflows** → **Import from File** → select `workflow.json`
+2. Replace the placeholder credentials (above)
+3. Point the sink at your own Notion database ID
+4. Run once manually, then activate
 
-## What's been sanitized
+## Sanitized
+No API keys, tokens, or webhook secrets. Credential IDs, workflow `id`/`versionId`, and personal identifiers (Notion DB IDs, monitored rosters) are placeholders or samples.
 
-- Credential references replaced with `REPLACE_WITH_*_CREDENTIAL_ID` placeholders
-- All real Notion database/property IDs remapped to inert placeholder UUIDs (`aaaaaaaa-0000-4000-8000-…`)
-- API tokens, Slack channel IDs, Google Drive folder IDs, and email addresses removed
-- Environment-specific fields (`id`, `versionId`, `tags`, `active`, pinned data) stripped
+MIT. Part of the [content pipeline](https://www.alecfoster.com/guides/content-pipeline) behind alecfoster.com.

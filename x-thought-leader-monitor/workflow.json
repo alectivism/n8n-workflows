@@ -513,7 +513,7 @@
         ],
         "credentials": {
           "httpHeaderAuth": {
-            "id": "pW4TITjTSI7A6ay7",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Apify API"
           }
         }
@@ -567,7 +567,7 @@
         ],
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }
@@ -621,7 +621,7 @@
         ],
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }
@@ -733,7 +733,7 @@
         ],
         "credentials": {
           "httpHeaderAuth": {
-            "id": "hrJsx0jwWYoqTin3",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Anthropic API"
           }
         }
@@ -787,7 +787,7 @@
         ],
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }

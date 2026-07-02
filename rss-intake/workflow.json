@@ -956,7 +956,7 @@
         "onError": "continueRegularOutput",
         "credentials": {
           "notionApi": {
-            "id": "ENCulrOmhE9JA4kU",
+            "id": "REPLACE_WITH_NOTIONAPI_CREDENTIAL_ID",
             "name": "Notion account"
           }
         }

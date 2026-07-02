@@ -569,7 +569,7 @@
         "id": "aaaaaaaa-0000-4000-8000-000000000073",
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }
@@ -625,7 +625,7 @@
         "id": "aaaaaaaa-0000-4000-8000-000000000075",
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }
@@ -738,7 +738,7 @@
         "id": "aaaaaaaa-0000-4000-8000-000000000077",
         "credentials": {
           "httpHeaderAuth": {
-            "id": "hrJsx0jwWYoqTin3",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Anthropic API"
           }
         }
@@ -794,7 +794,7 @@
         "id": "aaaaaaaa-0000-4000-8000-000000000079",
         "credentials": {
           "httpHeaderAuth": {
-            "id": "lkBxXCZI71uJWuhy",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Notion API v2"
           }
         }
@@ -824,7 +824,7 @@
           "specifyBody": "json",
           "jsonBody": "={{ JSON.stringify({ startUrls: $json.startUrls, maxItems: $json.maxItems, maxPostCount: $json.maxPostCount, maxComments: 0, maxCommunitiesCount: 0, maxUserCount: 0, scrollTimeout: 40, proxy: { useApifyProxy: true } }) }}",
           "options": {
-            "timeout": 90000,
+            "timeout": 230000,
             "response": {
               "response": {
                 "neverError": false
@@ -841,7 +841,7 @@
         ],
         "credentials": {
           "httpHeaderAuth": {
-            "id": "pW4TITjTSI7A6ay7",
+            "id": "REPLACE_WITH_HTTPHEADERAUTH_CREDENTIAL_ID",
             "name": "Apify API"
           }
         },

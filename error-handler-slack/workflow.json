@@ -148,7 +148,7 @@
         "webhookId": "aaaaaaaa-0000-4000-8000-000000000019",
         "credentials": {
           "slackOAuth2Api": {
-            "id": "n2aWjmqdcDkBfPNm",
+            "id": "REPLACE_WITH_SLACKOAUTH2API_CREDENTIAL_ID",
             "name": "Slack OAuth2 API"
           }
         }
