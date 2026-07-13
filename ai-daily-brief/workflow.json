@@ -1,0 +1,410 @@
+{
+  "name": "Content Pipeline: AI Daily Brief (dedicated)",
+  "nodes": [
+    {
+      "id": "n1",
+      "name": "Daily 9am PT (fetch yesterday)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n2",
+      "name": "Build Episode URLs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const date = $now.setZone('America/New_York').minus({ days: 1 }).toFormat('yyyy-LL-dd');\nreturn [{ json: {\n  episode_date: date,\n  insights_url: `https://aidailybrief.ai/e/${date}.md`,\n  transcript_url: `https://aidailybrief.ai/e/${date}/transcript.md`,\n  episode_url: `https://aidailybrief.ai/e/${date}`,\n} }];"
+      }
+    },
+    {
+      "id": "n3",
+      "name": "Fetch Transcript",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.transcript_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n4",
+      "name": "Episode Published?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.statusCode === 200 && ($json.body || '').length > 800 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "n5",
+      "name": "Fetch Insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Build Episode URLs').item.json.insights_url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n6",
+      "name": "Claude Synthesize Episode",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1100,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"claude-sonnet-5\",\n  thinking: { type: \"disabled\" },\n  max_tokens: 16000,\n  system: [{ type: \"text\", text: \"You synthesize ONE cohesive, publish-ready content idea from a full episode of The AI Daily Brief (host: Nathaniel 'NLW' Whittemore) for Alec Foster, Chief AI Architect & Responsible AI Lead at Marketing + Media Alliance (MMA). Alec's lane (score relevance to this): Claude/Anthropic, Claude Code and agent SDKs, agentic AI, AI governance, responsible AI, AI safety, marketing AI, enterprise AI adoption, MCP, prompt engineering, LLM evals, AI strategy for CMOs. You are given BOTH the show's own curated insights/numbers AND the full transcript. Your job is NOT to list separate topics. Find the single strongest through-line of the WHOLE episode and build one post around it, weaving in the 2-4 most important supporting threads with their specific numbers, names, and quotes.\", cache_control: { type: \"ephemeral\" } }],\n  messages: [{ role: \"user\", content:\n    \"Synthesize THIS ENTIRE AI Daily Brief episode into ONE content idea. Return ONLY JSON with this shape: {\\\"episode_title\\\":\\\"the episode's real title\\\",\\\"episode_summary\\\":\\\"3-5 sentences\\\",\\\"idea\\\":{\\\"topic_headline\\\":\\\"single-post headline capturing the episode's core tension\\\",\\\"hook\\\":\\\"2-3 sentences\\\",\\\"key_points\\\":[\\\"5-9 bullets, the supporting threads woven together, each >=15 words with a concrete number/name/quote\\\"],\\\"observations\\\":[\\\"2-5 bullets of nuance or counterpoints\\\"],\\\"tips\\\":[\\\"0-5 actionable takeaways\\\"],\\\"quotes\\\":[{\\\"speaker\\\":\\\"\\\",\\\"quote\\\":\\\">=10 words verbatim\\\",\\\"timestamp\\\":\\\"\\\"}],\\\"why_it_matters\\\":\\\"3-5 sentences, Alec/MMA angle\\\",\\\"open_question\\\":\\\"1 sentence\\\",\\\"draft_angle\\\":\\\"1-2 sentence spine that UNIFIES the whole post\\\",\\\"further_reading\\\":[{\\\"title\\\":\\\"\\\",\\\"url\\\":\\\"\\\"}],\\\"topics\\\":[\\\"subset of Claude|Agents|AI Governance|Marketing AI|Measurement|AI Strategy|LLMs|MCP|Voice AI|AI Safety|Enterprise AI|Creator Economy|Policy|Research|Content|Prompt Engineering|Reddit/Search|OpenAI|Anthropic|Google|Meta|Codex\\\"],\\\"audience\\\":[\\\"subset of Marketers|AI Practitioners|Execs/CMOs|Governance|Builders|General\\\"],\\\"hot_take_potential\\\":\\\"High|Medium|Low\\\",\\\"utility\\\":\\\"High|Medium|Low\\\",\\\"relevance\\\":\\\"High|Medium|Low\\\",\\\"format\\\":\\\"Hot Take|Explainer|Framework|Case Study|Announcement\\\"}}. For quotes: when the host quotes a NAMED third party (person, paper, company), keep it accurate and verbatim so it is citable; the host's OWN words may be cleaned of filler, false starts, and transcription artifacts (never reproduce 'um'/'uh'). Prefer NLW's sharpest framing and cited stats; attribute cited third parties. Ignore sponsor reads and intros/outros. Use the show's insights for hard numbers and the transcript for nuance and quotes.\\n\\n\" +\n    \"Episode date: \" + $('Build Episode URLs').item.json.episode_date + \"\\nEpisode URL: \" + $('Build Episode URLs').item.json.episode_url + \"\\n\\n\" +\n    \"=== SHOW-PUBLISHED INSIGHTS (aidailybrief.ai) ===\\n\" + (($('Fetch Insights').item.json.body) || \"(insights unavailable)\") + \"\\n\\n\" +\n    \"=== FULL TRANSCRIPT ===\\n\" + (($('Fetch Transcript').item.json.body) || \"\")\n  }]\n}) }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic API"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n7",
+      "name": "Build Notion Bodies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const DB = \"640bfa89-154f-46fb-9ab9-ed198562f684\";\nconst d = $input.first().json;\nconst tb = (d.content || []).find(b => b && b.type === \"text\");\nlet raw = (tb && tb.text) ? tb.text : \"{}\";\nraw = raw.replace(/^```json\\s*/i, \"\").replace(/```\\s*$/, \"\").trim();\nlet p; try { p = JSON.parse(raw); } catch (e) { p = { episode_title: \"AI Daily Brief \u2014 parse failed\", episode_summary: \"\", idea: {} }; }\nconst idea = p.idea || {};\nconst urls = $('Build Episode URLs').item.json;\nconst insights = ($('Fetch Insights').item.json.body) || \"\";\nconst title = (p.episode_title && String(p.episode_title).trim()) ? (\"AI Daily Brief \u2014 \" + p.episode_title) : (\"AI Daily Brief \u2014 \" + urls.episode_date);\nconst chunks = [];\nfor (let i = 0; i < insights.length; i += 1900) chunks.push(insights.substring(i, i + 1900));\nconst insightBlocks = chunks.slice(0, 40).map(c => ({ object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: c } }] } }));\nconst source_body = {\n  parent: { database_id: DB },\n  properties: {\n    Title: { title: [{ text: { content: title.substring(0, 200) } }] },\n    Type: { select: { name: \"Source\" } },\n    \"Source Type\": { select: { name: \"podcast\" } },\n    Episode: { rich_text: [{ type: \"text\", text: { content: title.substring(0, 2000), link: { url: urls.episode_url } } }] },\n    Published: { date: { start: urls.episode_date } },\n    \"Transcript Source\": { select: { name: \"AIDB Published\" } },\n    Topics: { multi_select: [{ name: \"AI Strategy\" }] }\n  },\n  children: [\n    { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Episode Insights (show-published)\" } }] } },\n    ...(insightBlocks.length ? insightBlocks : [{ object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: \"(insights unavailable)\" } }] } }]),\n    { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: \"Full transcript: \" + urls.transcript_url, link: { url: urls.transcript_url } } }] } }\n  ]\n};\nreturn [{ json: { source_body, idea, episode_title: title, episode_summary: p.episode_summary || \"\", episode_date: urls.episode_date, episode_url: urls.episode_url } }];"
+      }
+    },
+    {
+      "id": "n8",
+      "name": "Notion: Create AIDB Source",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.source_body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_NOTION_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "n9",
+      "name": "Build Idea Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "const DB = \"640bfa89-154f-46fb-9ab9-ed198562f684\";\nconst src = $input.first().json;\nconst sourceId = (src && src.id) ? src.id : \"\";\nconst bb = $('Build Notion Bodies').item.json;\nconst idea = bb.idea || {};\nconst VALID = new Set([\"Claude\",\"Agents\",\"AI Governance\",\"Marketing AI\",\"Measurement\",\"AI Strategy\",\"LLMs\",\"MCP\",\"Voice AI\",\"AI Safety\",\"Enterprise AI\",\"Creator Economy\",\"Policy\",\"Research\",\"Content\",\"Prompt Engineering\",\"Reddit/Search\",\"OpenAI\",\"Anthropic\",\"Google\",\"Meta\",\"Codex\"]);\nconst CANON = {\"gemini\":\"Google\",\"google\":\"Google\",\"chatgpt\":\"OpenAI\",\"gpt\":\"OpenAI\",\"openai\":\"OpenAI\",\"anthropic\":\"Anthropic\",\"claude\":\"Claude\",\"llama\":\"Meta\",\"meta\":\"Meta\",\"agent\":\"Agents\",\"agentic\":\"Agents\",\"governance\":\"AI Governance\",\"responsible ai\":\"AI Governance\",\"ethic\":\"AI Governance\",\"safety\":\"AI Safety\",\"alignment\":\"AI Safety\",\"policy\":\"Policy\",\"regulat\":\"Policy\",\"marketing\":\"Marketing AI\",\"advertis\":\"Marketing AI\",\"measurement\":\"Measurement\",\"attribution\":\"Measurement\",\"analytics\":\"Measurement\",\"strategy\":\"AI Strategy\",\"llm\":\"LLMs\",\"language model\":\"LLMs\",\"mcp\":\"MCP\",\"voice\":\"Voice AI\",\"enterprise\":\"Enterprise AI\",\"creator\":\"Creator Economy\",\"research\":\"Research\",\"paper\":\"Research\",\"content\":\"Content\",\"prompt\":\"Prompt Engineering\",\"search\":\"Reddit/Search\",\"reddit\":\"Reddit/Search\",\"codex\":\"Codex\"};\nconst normTopics = (ts) => { const out = new Set(); for (const t of (ts || [])) { const k = String(t || \"\").trim(); if (!k) continue; if (VALID.has(k)) { out.add(k); continue; } const lc = k.toLowerCase(); for (const [a, c] of Object.entries(CANON)) { if (lc.includes(a)) { out.add(c); break; } } } return out.size ? Array.from(out) : [\"AI Strategy\"]; };\nconst arr = v => Array.isArray(v) ? v : (v ? [v] : []);\nconst kp = arr(idea.key_points), obs = arr(idea.observations), tips = arr(idea.tips), quotes = arr(idea.quotes), fr = arr(idea.further_reading);\nconst children = [\n  { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Hook\" } }] } },\n  { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (idea.hook || \"\").substring(0, 2000) } }] } },\n  { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Key Threads\" } }] } },\n  ...kp.map(x => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(x).substring(0, 2000) } }] } })),\n  ...(obs.length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Observations\" } }] } }, ...obs.map(x => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(x).substring(0, 2000) } }] } }))] : []),\n  ...(tips.length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Tips\" } }] } }, ...tips.map(x => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: String(x).substring(0, 2000) } }] } }))] : []),\n  ...(quotes.length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Quotes\" } }] } }, ...quotes.map(q => ({ object: \"block\", type: \"quote\", quote: { rich_text: [{ type: \"text\", text: { content: ('\"' + (q.quote || \"\") + '\" \u2014 ' + (q.speaker || \"Unknown\") + (q.timestamp ? \" (\" + q.timestamp + \")\" : \"\")).substring(0, 2000) } }] } }))] : []),\n  { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Why It Matters\" } }] } },\n  { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (idea.why_it_matters || \"\").substring(0, 2000) } }] } },\n  { object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Draft Angle (whole-episode spine)\" } }] } },\n  { object: \"block\", type: \"callout\", callout: { icon: { type: \"emoji\", emoji: \"\ud83d\udca1\" }, rich_text: [{ type: \"text\", text: { content: (idea.draft_angle || \"\").substring(0, 2000) } }] } },\n  ...(idea.open_question ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Open Question\" } }] } }, { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: String(idea.open_question).substring(0, 2000) } }] } }] : []),\n  ...(fr.length ? [{ object: \"block\", type: \"heading_2\", heading_2: { rich_text: [{ type: \"text\", text: { content: \"Further Reading\" } }] } }, ...fr.map(r => ({ object: \"block\", type: \"bulleted_list_item\", bulleted_list_item: { rich_text: [{ type: \"text\", text: { content: (r.title || r.url || \"\").substring(0, 2000), link: r.url ? { url: r.url } : null } }] } }))] : []),\n  { object: \"block\", type: \"divider\", divider: {} },\n  { object: \"block\", type: \"paragraph\", paragraph: { rich_text: [{ type: \"text\", text: { content: (\"Source: \" + bb.episode_title + \" [\" + bb.episode_url + \"] | whole-episode synthesis | model: Sonnet 5\").substring(0, 2000) } }] } }\n];\nconst idea_body = {\n  parent: { database_id: DB },\n  properties: {\n    Title: { title: [{ text: { content: (idea.topic_headline || bb.episode_title || \"AI Daily Brief\").substring(0, 200) } }] },\n    Type: { select: { name: \"Idea\" } },\n    \"Source Type\": { select: { name: \"podcast\" } },\n    Episode: { rich_text: [{ type: \"text\", text: { content: (bb.episode_title || \"\").substring(0, 2000), link: { url: bb.episode_url } } }] },\n    Published: { date: { start: bb.episode_date } },\n    \"Hot Take Potential\": { select: { name: idea.hot_take_potential || \"Medium\" } },\n    Utility: { select: { name: idea.utility || \"Medium\" } },\n    Relevance: { select: { name: idea.relevance || \"High\" } },\n    Format: { select: { name: idea.format || \"Explainer\" } },\n    Topics: { multi_select: normTopics(idea.topics).map(t => ({ name: t })) },\n    Audience: { multi_select: (idea.audience || []).map(a => ({ name: String(a).substring(0, 90) })) },\n    Summary: { rich_text: [{ text: { content: (idea.hook || bb.episode_summary || \"\").substring(0, 2000) } }] },\n    \"Extraction Model\": { select: { name: \"Sonnet 5\" } },\n    \"Transcript Source\": { select: { name: \"AIDB Published\" } },\n    \"Episode Source\": sourceId ? { relation: [{ id: sourceId }] } : { relation: [] }\n  },\n  children\n};\nreturn [{ json: { idea_body } }];"
+      }
+    },
+    {
+      "id": "n10",
+      "name": "Notion: Create AIDB Idea",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1980,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Notion-Version",
+              "value": "2022-06-28"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.idea_body) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_NOTION_CREDENTIAL_ID",
+          "name": "Notion API v2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Daily 9am PT (fetch yesterday)": {
+      "main": [
+        [
+          {
+            "node": "Build Episode URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Episode URLs": {
+      "main": [
+        [
+          {
+            "node": "Fetch Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Transcript": {
+      "main": [
+        [
+          {
+            "node": "Episode Published?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Episode Published?": {
+      "main": [
+        [
+          {
+            "node": "Fetch Insights",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Fetch Insights": {
+      "main": [
+        [
+          {
+            "node": "Claude Synthesize Episode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Synthesize Episode": {
+      "main": [
+        [
+          {
+            "node": "Build Notion Bodies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notion Bodies": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create AIDB Source",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion: Create AIDB Source": {
+      "main": [
+        [
+          {
+            "node": "Build Idea Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Idea Body": {
+      "main": [
+        [
+          {
+            "node": "Notion: Create AIDB Idea",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Los_Angeles",
+    "errorWorkflow": "HrwcI5OK2E2EZ8PV"
+  }
+}
